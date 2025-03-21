@@ -1,0 +1,79 @@
+# Xcode
+#
+# gitignore cho Xcode và Swift
+# Dựa trên https://github.com/github/gitignore/blob/main/Swift.gitignore
+#
+## Build và thư mục build
+.build/
+build/
+DerivedData/
+*.o
+*.LinkFileList
+
+## Các tệp do IDE tự động tạo
+*.swiftpm/
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+/*.gcno
+**/xcshareddata/WorkspaceSettings.xcsettings
+
+## Các file ứng dụng và thư mục tạm thời
+Clipboard.app/
+*.dmg
+dmg_temp/
+icon.iconset/
+Sources/
+Package.resolved
+Package.swift
+
+## Các file cấu hình riêng của người dùng
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+
+## Các file cài đặt và cấu hình khác
+*.DS_Store
+.DS_Store
+.AppleDouble
+.LSOverride
+.env
+*.env.*
+*.sh
+
+## Thumbnails
+._*
+
+## Files mà Finder (macOS) có thể tạo ra
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+## Package.resolved
+# Package.resolved có thể được bao gồm trong Git nếu được chia sẻ giữa các nhà phát triển
+# Package.resolved
+
+## Thư mục văn bản và cấu hình SPM
+.accio/
+
+## Swift Package Manager
+# Bổ sung vào file .gitignore để không kiểm soát bản sao nguồn của thư viện
+# Pods/
+# Carthage/Checkouts
+
+# Carthage - bổ sung danh sách thư viện bên ngoài
+# Carthage/Build/
+
+# fastlane
+# Không cần quản lý screenshot được tạo bởi fastlane
+# fastlane/report.xml
+# fastlane/Preview.html
+# fastlane/screenshots/**/*.png
+# fastlane/test_output
