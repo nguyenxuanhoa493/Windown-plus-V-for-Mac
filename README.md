@@ -8,9 +8,7 @@ Clipboard là một ứng dụng macOS nhỏ gọn, hiệu quả giúp bạn qu�
 
 ## Demo
 
-### Video Demo
-
-<video src="demo/Video demo.mp4" controls width="100%"></video>
+![Video Demo](demo/Video%20demo.mp4)
 
 ### Giao diện ứng dụng
 
