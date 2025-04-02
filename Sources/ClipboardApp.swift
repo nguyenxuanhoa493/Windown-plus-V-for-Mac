@@ -321,31 +321,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleItemSelected(_ item: ClipboardItem) {
         print("DEBUG: Đã chọn một mục từ lịch sử")
         
-        // Copy nội dung vào clipboard
-        clipboardManager.copyToClipboard(item)
-        
-        // Đóng cửa sổ
+        // Đóng cửa sổ trước
         if let window = virtualWindow {
             window.close()
         }
         
-        // Đợi một chút để clipboard được cập nhật
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            // Giả lập phím Command + V
-            if let source = CGEventSource(stateID: .hidSystemState) {
-                let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
-                let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
-                let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-                let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
-                
-                vDown?.flags = .maskCommand
-                vUp?.flags = .maskCommand
-                
-                cmdDown?.post(tap: .cghidEventTap)
-                vDown?.post(tap: .cghidEventTap)
-                vUp?.post(tap: .cghidEventTap)
-                cmdUp?.post(tap: .cghidEventTap)
-            }
+        // Paste nội dung
+        item.paste()
+        
+        // Di chuyển item lên đầu danh sách một cách ngầm
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.clipboardManager.moveToTop(item)
         }
     }
     

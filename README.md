@@ -21,6 +21,8 @@ Clipboard là một ứng dụng macOS nhỏ gọn, hiệu quả giúp bạn qu�
 -   **Phím tắt**: Mở nhanh ứng dụng bằng phím tắt (Control+V)
 -   **Giao diện tối giản**: Giao diện người dùng đơn giản, dễ sử dụng
 -   **Hỗ trợ chữ và hình ảnh**: Lưu cả văn bản và hình ảnh trong lịch sử
+-   **Tự động sắp xếp**: Các mục được sử dụng thường xuyên sẽ tự động lên đầu danh sách
+-   **Paste nhanh**: Tự động paste nội dung khi chọn từ lịch sử
 
 ## Yêu cầu hệ thống
 
@@ -28,6 +30,12 @@ Clipboard là một ứng dụng macOS nhỏ gọn, hiệu quả giúp bạn qu�
 -   Khoảng 1MB dung lượng đĩa
 
 ## Change log
+
+### Version 1.4
+
+-   Tự động paste nội dung khi chọn từ lịch sử
+-   Tự động di chuyển mục được sử dụng lên đầu danh sách
+-   Cải thiện hiệu suất và trải nghiệm người dùng
 
 ### Version 1.3
 
@@ -48,7 +56,7 @@ Clipboard là một ứng dụng macOS nhỏ gọn, hiệu quả giúp bạn qu�
 1. Khởi động ứng dụng
 2. Biểu tượng Clipboard sẽ xuất hiện trong thanh menu
 3. Nhấp vào biểu tượng để xem lịch sử clipboard
-4. Nhấp vào một mục để sao chép nó vào clipboard
+4. Nhấp vào một mục để tự động paste nó vào vị trí con trỏ
 5. Hoặc sử dụng phím tắt Control+V để mở ứng dụng
 
 ## Liên hệ & Hỗ trợ

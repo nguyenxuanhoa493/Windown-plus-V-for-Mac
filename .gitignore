@@ -22,7 +22,6 @@ DerivedData/
 
 ## Các file ứng dụng và thư mục tạm thời
 Clipboard.app/
-*.dmg
 dmg_temp/
 icon.iconset/
 Package.resolved

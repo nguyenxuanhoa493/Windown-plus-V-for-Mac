@@ -118,4 +118,25 @@ class ClipboardManager {
         history.removeAll()
         saveHistory()
     }
+    
+    func moveToTop(_ item: ClipboardItem) {
+        // Tạo một bản sao mới của item với timestamp mới
+        let newItem: ClipboardItem
+        if let text = item.text {
+            newItem = ClipboardItem(text: text, timestamp: Date())
+        } else if let imageData = item.imageData {
+            newItem = ClipboardItem(imageData: imageData, timestamp: Date())
+        } else {
+            return
+        }
+        
+        // Xóa item cũ nếu có
+        if let index = history.firstIndex(where: { $0.id == item.id }) {
+            history.remove(at: index)
+        }
+        
+        // Thêm item mới vào đầu danh sách
+        history.insert(newItem, at: 0)
+        saveHistory()
+    }
 } 
