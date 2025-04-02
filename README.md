@@ -27,9 +27,16 @@ Clipboard là một ứng dụng macOS nhỏ gọn, hiệu quả giúp bạn qu�
 -   macOS 12.0 trở lên
 -   Khoảng 1MB dung lượng đĩa
 
+## Change log
+
+### Version 1.3
+
+-   Thêm nút xóa toàn bộ lịch sử clipboard
+-   Tự động ẩn cửa sổ danh sách khi click ra ngoài
+
 ## Cài đặt
 
-1. Tải xuống file `Clipboard-1.2.dmg` từ [trang Releases](https://github.com/nguyenxuanhoa493/Windown-plus-V-for-Mac/releases/tag/Beta)
+1. Tải xuống file `Clipboard.dmg` từ [trang Releases](https://github.com/nguyenxuanhoa493/Windown-plus-V-for-Mac/releases/tag/Beta)
 2. Mở file DMG và kéo ứng dụng Clipboard vào thư mục Applications
 3. Mở ứng dụng từ Launchpad hoặc thư mục Applications
 4. Cho phép sử dụng trợ năng
