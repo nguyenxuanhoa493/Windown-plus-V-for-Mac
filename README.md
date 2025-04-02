@@ -36,7 +36,7 @@ Clipboard là một ứng dụng macOS nhỏ gọn, hiệu quả giúp bạn qu�
 
 ## Cài đặt
 
-1. Tải xuống file `Clipboard.dmg` từ [trang Releases](https://github.com/nguyenxuanhoa493/Windown-plus-V-for-Mac/releases/tag/Beta)
+1. Tải xuống file `Clipboard.dmg` từ [trang Releases](https://github.com/nguyenxuanhoa493/Windown-plus-V-for-Mac/releases)
 2. Mở file DMG và kéo ứng dụng Clipboard vào thư mục Applications
 3. Mở ứng dụng từ Launchpad hoặc thư mục Applications
 4. Cho phép sử dụng trợ năng
