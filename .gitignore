@@ -25,7 +25,6 @@ Clipboard.app/
 *.dmg
 dmg_temp/
 icon.iconset/
-Sources/
 Package.resolved
 Package.swift
 
