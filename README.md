@@ -8,11 +8,17 @@ Clipboard là một ứng dụng macOS nhỏ gọn, hiệu quả giúp bạn qu�
 
 ## Demo
 
-[Video Demo](demo/video.mp4)
+[![Video Demo](https://img.youtube.com/vi/SgfGhm40Olw/0.jpg)](https://youtu.be/SgfGhm40Olw)
+
+<p align="center">
+  <a href="https://youtu.be/SgfGhm40Olw" target="_blank">
+    <img src="https://img.youtube.com/vi/SgfGhm40Olw/0.jpg" alt="Video Demo" width="480"/>
+  </a>
+</p>
 
 ### Giao diện ứng dụng
 
-![Giao diện Clipboard](demo/image_1.png)
+![Giao diện Clipboard](demo/demo.png)
 
 ## Tính năng
 
@@ -68,4 +74,4 @@ Nếu bạn gặp vấn đề hoặc có câu hỏi, vui lòng:
 
 ---
 
-Nếu bạn thấy dự án hữu ích, hãy cân nhắc [ủng hộ tác giả một ly cà phê](https://www.buymeacoffee.com/cooperhull) ☕
+Nếu bạn thấy dự án hữu ích, hãy cân nhắc [ủng hộ tác giả một ly cà phê](Sources/Resources/cafe.jpg) ☕
