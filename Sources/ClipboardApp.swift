@@ -132,6 +132,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }, onClearAll: {
             self.clipboardManager.clearHistory()
             self.setupPopover() // Cập nhật lại popover sau khi xóa toàn bộ
+        }, onCopyOnly: { item in
+            self.popover?.close()
+        }, onTogglePin: { item in
+            self.clipboardManager.togglePin(item)
+            self.setupPopover()
+        }, onDeleteItem: { item in
+            self.clipboardManager.removeItem(item)
+            self.setupPopover()
+        }, onToggleBookmark: { item in
+            self.clipboardManager.toggleBookmark(item)
+            self.setupPopover()
+        }, onClearBookmarks: {
+            self.clipboardManager.clearBookmarks()
+            self.setupPopover()
+        }, onClearByType: { type in
+            self.clipboardManager.clearByType(type)
+            self.setupPopover()
         })
         popover?.contentViewController = NSHostingController(rootView: view)
     }
@@ -226,7 +243,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Đóng cửa sổ ảo cũ nếu có
         if let window = virtualWindow, window.isVisible {
             window.close()
-            return
+            virtualWindow = nil
         }
         
         // Lấy vị trí chuột hiện tại
@@ -282,25 +299,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.backgroundColor = .clear
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.titlebarAppearsTransparent = true
         panel.standardWindowButton(.closeButton)?.isHidden = false
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         
+        // Helper để refresh view
+        func refreshPanelView() {
+            let items = self.clipboardManager.getHistory() ?? []
+            let clipboardView = ClipboardHistoryView(items: items, onItemSelected: { [weak self] item in
+                self?.handleItemSelected(item)
+                panel.close()
+            }, onClearAll: { [weak self] in
+                self?.clipboardManager.clearHistory()
+                refreshPanelView()
+            }, onCopyOnly: { item in
+                panel.close()
+            }, onTogglePin: { [weak self] item in
+                self?.clipboardManager.togglePin(item)
+                refreshPanelView()
+            }, onDeleteItem: { [weak self] item in
+                self?.clipboardManager.removeItem(item)
+                refreshPanelView()
+            }, onToggleBookmark: { [weak self] item in
+                self?.clipboardManager.toggleBookmark(item)
+                refreshPanelView()
+            }, onClearBookmarks: { [weak self] in
+                self?.clipboardManager.clearBookmarks()
+                refreshPanelView()
+            }, onClearByType: { [weak self] type in
+                self?.clipboardManager.clearByType(type)
+                refreshPanelView()
+            })
+            
+            let hostingView = NSHostingView(rootView: clipboardView)
+            hostingView.frame = NSRect(origin: .zero, size: popoverSize)
+            panel.contentView = hostingView
+        }
+        
         // Tạo view
-        let clipboardView = ClipboardHistoryView(items: items, onItemSelected: { [weak self] item in
-            self?.handleItemSelected(item)
-            panel.close()
-        }, onClearAll: { [weak self] in
-            self?.clipboardManager.clearHistory()
-            panel.close()
-        })
-        
-        let hostingView = NSHostingView(rootView: clipboardView)
-        hostingView.frame = NSRect(origin: .zero, size: popoverSize)
-        
-        panel.contentView = hostingView
+        refreshPanelView()
         panel.makeKeyAndOrderFront(nil)
         
         // Thêm monitor cho sự kiện click chuột bên ngoài
@@ -324,14 +363,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Đóng cửa sổ trước
         if let window = virtualWindow {
             window.close()
+            virtualWindow = nil
         }
         
-        // Paste nội dung
-        item.paste()
-        
-        // Di chuyển item lên đầu danh sách một cách ngầm
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            self.clipboardManager.moveToTop(item)
+        // Đợi window đóng và app ban đầu được focus trở lại
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            // Paste nội dung
+            item.paste()
+            
+            // Move item lên đầu sau khi paste xong
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.clipboardManager.moveToTop(item)
+            }
         }
     }
     
@@ -369,20 +412,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             panel.setFrame(windowFrame, display: true)
         }
         
+        // Helper để refresh view
+        func refreshPanelView() {
+            let items = self.clipboardManager.getHistory() ?? []
+            let clipboardView = ClipboardHistoryView(items: items, onItemSelected: { [weak self] item in
+                self?.handleItemSelected(item)
+                panel.close()
+            }, onClearAll: { [weak self] in
+                self?.clipboardManager.clearHistory()
+                refreshPanelView()
+            }, onCopyOnly: { item in
+                panel.close()
+            }, onTogglePin: { [weak self] item in
+                self?.clipboardManager.togglePin(item)
+                refreshPanelView()
+            }, onDeleteItem: { [weak self] item in
+                self?.clipboardManager.removeItem(item)
+                refreshPanelView()
+            }, onToggleBookmark: { [weak self] item in
+                self?.clipboardManager.toggleBookmark(item)
+                refreshPanelView()
+            }, onClearBookmarks: { [weak self] in
+                self?.clipboardManager.clearBookmarks()
+                refreshPanelView()
+            }, onClearByType: { [weak self] type in
+                self?.clipboardManager.clearByType(type)
+                refreshPanelView()
+            })
+            
+            let hostingView = NSHostingView(rootView: clipboardView)
+            hostingView.frame = NSRect(origin: .zero, size: windowSize)
+            panel.contentView = hostingView
+        }
+        
         // Tạo view
-        let items = clipboardManager.getHistory() ?? []
-        let clipboardView = ClipboardHistoryView(items: items, onItemSelected: { [weak self] item in
-            self?.handleItemSelected(item)
-            panel.close()
-        }, onClearAll: { [weak self] in
-            self?.clipboardManager.clearHistory()
-            panel.close()
-        })
-        
-        let hostingView = NSHostingView(rootView: clipboardView)
-        hostingView.frame = NSRect(origin: .zero, size: windowSize)
-        
-        panel.contentView = hostingView
+        refreshPanelView()
         panel.makeKeyAndOrderFront(nil)
         
         // Thêm monitor cho sự kiện click chuột bên ngoài
