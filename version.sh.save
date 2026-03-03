@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# Version configuration
+VERSION="1.8"
+BUILD_NUMBER="1"

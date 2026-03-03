@@ -173,6 +173,18 @@ struct ClipboardHistoryView: View {
 }
 
 struct ClipboardItemView: View {
+    private static var fileIconCache: [String: NSImage] = [:]
+    
+    static func cachedFileIcon(for path: String) -> NSImage {
+        if let cached = fileIconCache[path] {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        icon.size = NSSize(width: 32, height: 32)
+        fileIconCache[path] = icon
+        return icon
+    }
+    
     let item: ClipboardItem
     let onItemSelected: (ClipboardItem) -> Void
     let onCopyOnly: ((ClipboardItem) -> Void)?
@@ -181,6 +193,8 @@ struct ClipboardItemView: View {
     let onToggleBookmark: ((ClipboardItem) -> Void)?
     @State private var isHovered = false
     @State private var showAsDateTime = false
+    @State private var showAsTable = false
+    @State private var showAsJSON = false
     @State private var displayText: String = ""
     
     var typeIcon: String {
@@ -255,9 +269,7 @@ struct ClipboardItemView: View {
                     } else {
                         // Hiển thị file info cho file thường và folder
                         HStack(spacing: 8) {
-                            // Hiển thị icon từ hệ thống
-                            let url = URL(fileURLWithPath: fileURL)
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                            Image(nsImage: ClipboardItemView.cachedFileIcon(for: fileURL))
                                 .resizable()
                                 .frame(width: 32, height: 32)
                             
@@ -276,7 +288,7 @@ struct ClipboardItemView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                } else if let text = item.text {
+                } else if item.text != nil {
                     HStack(spacing: 8) {
                         Text(displayText)
                             .lineLimit(3)
@@ -314,6 +326,18 @@ struct ClipboardItemView: View {
                         Image(systemName: "bookmark.fill")
                             .font(.system(size: 10))
                             .foregroundColor(.blue)
+                    }
+                    
+                    if item.isJSON {
+                        Image(systemName: "curlybraces")
+                            .font(.system(size: 10))
+                            .foregroundColor(.purple)
+                    }
+                    
+                    if item.isExcelData {
+                        Image(systemName: "tablecells")
+                            .font(.system(size: 10))
+                            .foregroundColor(.green)
                     }
                     
                     Image(systemName: typeIcon)
@@ -394,6 +418,52 @@ struct ClipboardItemView: View {
                         }
                     }
                     
+                    // Conversion button for JSON data
+                    if item.type == .text && item.isJSON {
+                        Button(action: {
+                            toggleJSONDisplay()
+                        }) {
+                            Image(systemName: showAsTable ? "curlybraces" : "tablecells")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white)
+                                .frame(width: 24, height: 24)
+                                .background(Color.purple)
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
+                        .onHover { hovering in
+                            if hovering {
+                                NSCursor.pointingHand.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
+                    }
+                    
+                    // Conversion button for Excel data
+                    if item.type == .text && item.isExcelData {
+                        Button(action: {
+                            toggleExcelDisplay()
+                        }) {
+                            Image(systemName: showAsJSON ? "tablecells" : "curlybraces")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white)
+                                .frame(width: 24, height: 24)
+                                .background(Color.green)
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(showAsJSON ? "Hiển thị dạng bảng" : "Hiển thị JSON")
+                        .onHover { hovering in
+                            if hovering {
+                                NSCursor.pointingHand.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
+                    }
+                    
                     // Copy button
                     Button(action: {
                         item.copyOnly(displayText: displayText)
@@ -465,6 +535,71 @@ struct ClipboardItemView: View {
             
             Divider()
             
+            // JSON/Excel conversion menu items
+            if item.isJSON {
+                Button(action: {
+                    toggleJSONDisplay()
+                }) {
+                    HStack {
+                        Image(systemName: showAsTable ? "curlybraces" : "tablecells")
+                        Text(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
+                    }
+                }
+                
+                Divider()
+            }
+            
+            if item.isExcelData {
+                Button(action: {
+                    toggleExcelDisplay()
+                }) {
+                    HStack {
+                        Image(systemName: showAsJSON ? "tablecells" : "curlybraces")
+                        Text(showAsJSON ? "Hiển thị dạng bảng" : "Hiển thị JSON")
+                    }
+                }
+                
+                Button(action: {
+                    // Paste Excel data as image
+                    if let imageData = generateExcelImageData() {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setData(imageData, forType: .tiff)
+                        
+                        // Trigger paste
+                        ClipboardManager.shared.ignoreNextChange()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            if let source = CGEventSource(stateID: .hidSystemState) {
+                                let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
+                                let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
+                                let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+                                let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
+                                
+                                vDown?.flags = .maskCommand
+                                vUp?.flags = .maskCommand
+                                
+                                cmdDown?.post(tap: .cghidEventTap)
+                                vDown?.post(tap: .cghidEventTap)
+                                vUp?.post(tap: .cghidEventTap)
+                                cmdUp?.post(tap: .cghidEventTap)
+                            }
+                        }
+                        
+                        // Close window
+                        if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                            window.close()
+                        }
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "photo")
+                        Text("Dán như ảnh")
+                    }
+                }
+                
+                Divider()
+            }
+            
             Button(action: {
                 onTogglePin?(item)
             }) {
@@ -510,7 +645,27 @@ struct ClipboardItemView: View {
         .onDrag {
             // Chỉ cho phép drag file/folder items
             if item.type == .file, let url = item.getFileURL() {
-                return NSItemProvider(object: url as NSURL)
+                // Để force copy (không phải move), ta copy file vào temp location
+                // với tên unique, sau đó drag từ temp location
+                let uniqueID = UUID().uuidString
+                let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ClipboardDrag-\(uniqueID)")
+                let tempURL = tempDir.appendingPathComponent(url.lastPathComponent)
+                
+                do {
+                    // Tạo temp directory
+                    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                    
+                    // Copy file vào temp
+                    try FileManager.default.copyItem(at: url, to: tempURL)
+                    
+                    // Drag từ temp location - destination sẽ copy/move file này
+                    // Khi drag từ temp location, macOS thường copy thay vì move
+                    return NSItemProvider(object: tempURL as NSURL)
+                } catch {
+                    print("Error preparing file for drag: \(error)")
+                    // Fallback: drag original file (có thể move)
+                    return NSItemProvider(object: url as NSURL)
+                }
             }
             return NSItemProvider()
         }
@@ -525,8 +680,14 @@ struct ClipboardItemView: View {
             }
         }
         .onTapGesture {
-            // Pass displayText khi paste
-            if item.type == .text && displayText != item.text {
+            // If item has been converted (JSON→Table, Excel→JSON, or Timestamp→DateTime), paste and close
+            if showAsTable || showAsJSON || showAsDateTime {
+                item.paste(displayText: displayText)
+                if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                    window.close()
+                }
+            } else if item.type == .text && displayText != item.text {
+                // Fallback: if displayText is different, paste it
                 item.paste(displayText: displayText)
                 if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
                     window.close()
@@ -561,5 +722,247 @@ struct ClipboardItemView: View {
                 displayText = text
             }
         }
+    }
+    
+    private func toggleJSONDisplay() {
+        showAsTable.toggle()
+        
+        if showAsTable {
+            // Convert JSON to table format (TSV) for display only
+            guard let text = item.text, item.isJSON else { return }
+            guard let data = text.data(using: .utf8) else { return }
+            
+            do {
+                let json = try JSONSerialization.jsonObject(with: data)
+                var tsvContent = ""
+                
+                if let array = json as? [[String: Any]] {
+                    guard let firstItem = array.first else { return }
+                    let headers = Array(firstItem.keys).sorted()
+                    
+                    tsvContent += headers.joined(separator: "\t") + "\n"
+                    
+                    for item in array {
+                        let values = headers.map { key -> String in
+                            if let value = item[key] {
+                                let stringValue = "\(value)"
+                                return stringValue.replacingOccurrences(of: "\t", with: " ")
+                                                 .replacingOccurrences(of: "\n", with: " ")
+                            }
+                            return ""
+                        }
+                        tsvContent += values.joined(separator: "\t") + "\n"
+                    }
+                } else if let dict = json as? [String: Any] {
+                    tsvContent += "Key\tValue\n"
+                    for (key, value) in dict.sorted(by: { $0.key < $1.key }) {
+                        let stringValue = "\(value)".replacingOccurrences(of: "\t", with: " ")
+                                                    .replacingOccurrences(of: "\n", with: " ")
+                        tsvContent += "\(key)\t\(stringValue)\n"
+                    }
+                } else if let array = json as? [Any] {
+                    tsvContent += "Value\n"
+                    for value in array {
+                        let stringValue = "\(value)".replacingOccurrences(of: "\t", with: " ")
+                                                    .replacingOccurrences(of: "\n", with: " ")
+                        tsvContent += "\(stringValue)\n"
+                    }
+                }
+                
+                displayText = tsvContent
+            } catch {
+                print("Error converting JSON to table: \(error)")
+            }
+        } else {
+            // Show original JSON
+            if let text = item.text {
+                displayText = text
+            }
+        }
+    }
+    
+    private func toggleExcelDisplay() {
+        showAsJSON.toggle()
+        
+        if showAsJSON {
+            // Convert Excel to JSON for display only (don't copy to clipboard yet)
+            guard let text = item.text, item.isExcelData else { return }
+            
+            let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            
+            let lines = cleanedText.components(separatedBy: .newlines).filter { line in
+                let cleaned = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                                 .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                return !cleaned.isEmpty
+            }
+            
+            guard lines.count >= 2 else { return }
+            
+            let headerLine = lines[0].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            let headers = headerLine.components(separatedBy: "\t").map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            
+            var jsonArray: [[String: Any]] = []
+            
+            for i in 1..<lines.count {
+                let valueLine = lines[i].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                let values = valueLine.components(separatedBy: "\t")
+                var dict: [String: Any] = [:]
+                
+                for j in 0..<min(headers.count, values.count) {
+                    let header = headers[j]
+                    let value = values[j].trimmingCharacters(in: .whitespacesAndNewlines)
+                    
+                    if header.isEmpty { continue }
+                    
+                    if !value.isEmpty && value.hasPrefix("0") && value.count > 1 {
+                        dict[header] = value
+                    } else if let intValue = Int(value) {
+                        dict[header] = intValue
+                    } else if let doubleValue = Double(value) {
+                        dict[header] = doubleValue
+                    } else {
+                        dict[header] = value
+                    }
+                }
+                
+                if !dict.isEmpty {
+                    jsonArray.append(dict)
+                }
+            }
+            
+            do {
+                let jsonData = try JSONSerialization.data(withJSONObject: jsonArray, options: [.prettyPrinted, .sortedKeys])
+                if let jsonString = String(data: jsonData, encoding: .utf8) {
+                    displayText = jsonString
+                }
+            } catch {
+                print("Error converting Excel to JSON: \(error)")
+            }
+        } else {
+            // Show original Excel data
+            if let text = item.text {
+                displayText = text
+            }
+        }
+    }
+    
+    private func generateExcelImageData() -> Data? {
+        guard let text = item.text, item.isExcelData else { return nil }
+        
+        // If we have the original image from Excel copy, use it
+        if let imageData = item.imageData {
+            return imageData
+        }
+        
+        // Otherwise, render the table as image
+        // Parse Excel data
+        let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        
+        let lines = cleanedText.components(separatedBy: .newlines).filter { line in
+            let cleaned = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                             .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            return !cleaned.isEmpty
+        }
+        
+        guard !lines.isEmpty else { return nil }
+        
+        // Create table image
+        let cellPadding: CGFloat = 8
+        let fontSize: CGFloat = 11
+        let font = NSFont.systemFont(ofSize: fontSize)
+        let headerFont = NSFont.boldSystemFont(ofSize: fontSize)
+        
+        // Calculate column widths
+        var columnWidths: [CGFloat] = []
+        let maxColumns = lines.map { $0.components(separatedBy: "\t").count }.max() ?? 0
+        
+        for colIndex in 0..<maxColumns {
+            var maxWidth: CGFloat = 0
+            for (rowIndex, line) in lines.enumerated() {
+                let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                    .components(separatedBy: "\t")
+                if colIndex < cells.count {
+                    let cellText = cells[colIndex]
+                    let cellFont = rowIndex == 0 ? headerFont : font
+                    let size = (cellText as NSString).size(withAttributes: [.font: cellFont])
+                    maxWidth = max(maxWidth, size.width)
+                }
+            }
+            columnWidths.append(maxWidth + cellPadding * 2)
+        }
+        
+        let totalWidth = columnWidths.reduce(0, +)
+        let rowHeight: CGFloat = fontSize + cellPadding * 2
+        let totalHeight = CGFloat(lines.count) * rowHeight
+        
+        // Create image
+        let imageSize = NSSize(width: totalWidth, height: totalHeight)
+        let image = NSImage(size: imageSize)
+        
+        image.lockFocus()
+        
+        // Draw background
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: imageSize).fill()
+        
+        // Draw cells (from top to bottom, accounting for flipped coordinates)
+        for (rowIndex, line) in lines.enumerated() {
+            let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                .components(separatedBy: "\t")
+            
+            // Calculate Y position from top (flip coordinate system)
+            let yOffset = totalHeight - CGFloat(rowIndex + 1) * rowHeight
+            
+            var xOffset: CGFloat = 0
+            for (colIndex, cell) in cells.enumerated() {
+                let cellWidth = colIndex < columnWidths.count ? columnWidths[colIndex] : 100
+                let cellRect = NSRect(x: xOffset, y: yOffset, width: cellWidth, height: rowHeight)
+                
+                // Draw cell border
+                NSColor.gray.setStroke()
+                let path = NSBezierPath(rect: cellRect)
+                path.lineWidth = 0.5
+                path.stroke()
+                
+                // Draw header background
+                if rowIndex == 0 {
+                    NSColor(white: 0.9, alpha: 1.0).setFill()
+                    cellRect.fill()
+                    NSColor.gray.setStroke()
+                    path.stroke()
+                }
+                
+                // Draw text
+                let cellFont = rowIndex == 0 ? headerFont : font
+                let textColor = NSColor.black
+                let paragraphStyle = NSMutableParagraphStyle()
+                paragraphStyle.alignment = .left
+                
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: cellFont,
+                    .foregroundColor: textColor,
+                    .paragraphStyle: paragraphStyle
+                ]
+                
+                let textRect = NSRect(
+                    x: xOffset + cellPadding,
+                    y: yOffset + cellPadding,
+                    width: cellWidth - cellPadding * 2,
+                    height: rowHeight - cellPadding * 2
+                )
+                
+                (cell as NSString).draw(in: textRect, withAttributes: attributes)
+                
+                xOffset += cellWidth
+            }
+        }
+        
+        image.unlockFocus()
+        
+        return image.tiffRepresentation
     }
 } 

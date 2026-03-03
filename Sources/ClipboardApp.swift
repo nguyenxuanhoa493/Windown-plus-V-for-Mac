@@ -16,13 +16,10 @@ struct ClipboardApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
-    var popover: NSPopover?
     var virtualWindow: NSPanel?
     var eventMonitor: Any?
     var hotKey: HotKey?
     private var clipboardManager = ClipboardManager.shared
-    private var settingsWindow: NSWindow?
-    private var contactWindow: NSWindow?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Ẩn cửa sổ chính của ứng dụng
@@ -35,7 +32,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("DEBUG: Ứng dụng đang khởi động...")
         
         // Kiểm tra quyền truy cập trợ năng
-        print("DEBUG: Trạng thái quyền truy cập: \(AXIsProcessTrusted())")
+        let hasAccessibility = AXIsProcessTrusted()
+        print("DEBUG: Trạng thái quyền truy cập: \(hasAccessibility)")
+        
+        if !hasAccessibility {
+            // Hiển thị popup yêu cầu quyền
+            print("DEBUG: Không có quyền Accessibility, hiển thị popup...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.showAccessibilityPermissionWindow()
+            }
+        }
         
         // Khởi tạo clipboard manager
         clipboardManager.startMonitoring()
@@ -68,13 +74,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "Clipboard")
             button.target = self
             button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
     }
     
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         if let event = NSApp.currentEvent {
             if event.type == .rightMouseUp {
-                statusItem?.menu?.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
+                let menu = statusItem?.menu
+                statusItem?.menu = menu
+                menu?.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
             } else {
                 showClipboardHistoryAtCursor()
             }
@@ -107,9 +116,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
         
         statusItem?.menu = menu
-        
-        // Đăng ký lắng nghe sự kiện thay đổi ngôn ngữ
-        NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: .languageChanged, object: nil)
     }
     
     @objc private func languageChanged() {
@@ -120,44 +126,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKey() // Cập nhật lại phím tắt khi có thay đổi
     }
     
-    func setupPopover() {
-        popover = NSPopover()
-        popover?.behavior = .transient
-        popover?.animates = true
-        popover?.contentSize = NSSize(width: 300, height: 450)
-        
-        let items = clipboardManager.getHistory() ?? []
-        let view = ClipboardHistoryView(items: items, onItemSelected: { item in
-            self.handleItemSelected(item)
-        }, onClearAll: {
-            self.clipboardManager.clearHistory()
-            self.setupPopover() // Cập nhật lại popover sau khi xóa toàn bộ
-        }, onCopyOnly: { item in
-            self.popover?.close()
-        }, onTogglePin: { item in
-            self.clipboardManager.togglePin(item)
-            self.setupPopover()
-        }, onDeleteItem: { item in
-            self.clipboardManager.removeItem(item)
-            self.setupPopover()
-        }, onToggleBookmark: { item in
-            self.clipboardManager.toggleBookmark(item)
-            self.setupPopover()
-        }, onClearBookmarks: {
-            self.clipboardManager.clearBookmarks()
-            self.setupPopover()
-        }, onClearByType: { type in
-            self.clipboardManager.clearByType(type)
-            self.setupPopover()
-        })
-        popover?.contentViewController = NSHostingController(rootView: view)
-    }
-    
-    func setupEventMonitor() {
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            self?.popover?.close()
-        }
-    }
     
     func setupHotKey() {
         // Hủy phím tắt cũ nếu có
@@ -237,66 +205,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    @objc func showClipboardHistoryAtCursor() {
-        print("DEBUG: Đang hiển thị clipboard history tại vị trí con trỏ...")
-        
-        // Đóng cửa sổ ảo cũ nếu có
-        if let window = virtualWindow, window.isVisible {
-            window.close()
-            virtualWindow = nil
+    private func removeEventMonitor() {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
         }
-        
-        // Lấy vị trí chuột hiện tại
-        let mouseLocation = NSEvent.mouseLocation
-        print("DEBUG: Vị trí chuột: \(mouseLocation)")
-        
-        // Lấy kích thước màn hình
-        guard let screen = NSScreen.main else { return }
-        let screenHeight = screen.frame.height
-        print("DEBUG: Chiều cao màn hình: \(screenHeight)")
-        
-        // Tính toán vị trí Y (trong macOS, tọa độ Y tính từ dưới lên)
-        let cursorY = mouseLocation.y
-        print("DEBUG: Vị trí Y của con trỏ: \(cursorY)")
-        
-        // Kích thước của popover
+    }
+    
+    private func createPanel() -> NSPanel {
         let popoverSize = NSSize(width: 300, height: 450)
-        
-        // Kiểm tra xem có đủ không gian ở dưới con trỏ không
-        let displayBelow = cursorY > popoverSize.height + 20
-        
-        // Hiển thị popover ở phía dưới hoặc phía trên con trỏ
-        var popoverOriginY: CGFloat
-        
-        if displayBelow {
-            print("DEBUG: Hiển thị dưới con trỏ")
-            popoverOriginY = cursorY
-        } else {
-            print("DEBUG: Hiển thị trên con trỏ")
-            popoverOriginY = cursorY - popoverSize.height
-        }
-        
-        // Điều chỉnh vị trí X để popover hiển thị đúng
-        let popoverOriginX = mouseLocation.x - 150 // Canh giữa
-        
-        print("DEBUG: Vị trí đã tính toán - X: \(popoverOriginX), Y: \(popoverOriginY)")
-        
-        // Lấy danh sách clipboard
-        print("DEBUG: Đang lấy danh sách clipboard...")
-        let items = clipboardManager.getHistory() ?? []
-        print("DEBUG: Đã lấy được \(items.count) mục từ clipboard")
-        
-        // Tạo cửa sổ ảo
         let panel = NSPanel(
-            contentRect: NSRect(x: popoverOriginX, y: popoverOriginY, width: popoverSize.width, height: popoverSize.height),
+            contentRect: NSRect(x: 0, y: 0, width: popoverSize.width, height: popoverSize.height),
             styleMask: [.titled, .resizable, .closable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        
         panel.title = "Lịch sử Clipboard"
         panel.isFloatingPanel = true
-        panel.level = .floating
+        panel.level = .popUpMenu
         panel.hidesOnDeactivate = false
         panel.backgroundColor = .clear
         panel.isMovableByWindowBackground = false
@@ -304,8 +230,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.standardWindowButton(.closeButton)?.isHidden = false
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
+        return panel
+    }
+    
+    @objc func showClipboardHistoryAtCursor() {
+        // Đóng cửa sổ cũ + cleanup monitor
+        if let window = virtualWindow, window.isVisible {
+            window.close()
+        }
+        removeEventMonitor()
         
-        // Helper để refresh view
+        let mouseLocation = NSEvent.mouseLocation
+        let popoverSize = NSSize(width: 300, height: 450)
+        
+        let cursorY = mouseLocation.y
+        let displayBelow = cursorY > popoverSize.height + 20
+        let popoverOriginY = displayBelow ? cursorY : cursorY - popoverSize.height
+        let popoverOriginX = mouseLocation.x - 150
+        
+        // Tái sử dụng panel hoặc tạo mới
+        let panel = virtualWindow ?? createPanel()
+        virtualWindow = panel
+        
+        panel.setFrame(
+            NSRect(x: popoverOriginX, y: popoverOriginY, width: popoverSize.width, height: popoverSize.height),
+            display: false
+        )
+        
+        // Refresh view
         func refreshPanelView() {
             let items = self.clipboardManager.getHistory() ?? []
             let clipboardView = ClipboardHistoryView(items: items, onItemSelected: { [weak self] item in
@@ -338,32 +290,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             panel.contentView = hostingView
         }
         
-        // Tạo view
         refreshPanelView()
         panel.makeKeyAndOrderFront(nil)
         
-        // Thêm monitor cho sự kiện click chuột bên ngoài
-        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak panel] event in
+        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self, weak panel] event in
             if let panel = panel, panel.isVisible {
-                let location = event.locationInWindow
-                if !panel.frame.contains(location) {
+                let mouseLocation = NSEvent.mouseLocation
+                if !panel.frame.contains(mouseLocation) {
                     panel.close()
+                    self?.removeEventMonitor()
                 }
             }
         }
-        
-        // Lưu monitor để có thể remove sau
         eventMonitor = monitor
-        virtualWindow = panel
     }
     
     private func handleItemSelected(_ item: ClipboardItem) {
-        print("DEBUG: Đã chọn một mục từ lịch sử")
-        
         // Đóng cửa sổ trước
+        removeEventMonitor()
         if let window = virtualWindow {
             window.close()
-            virtualWindow = nil
         }
         
         // Đợi window đóng và app ban đầu được focus trở lại
@@ -378,89 +324,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    func showAccessibilityPermissionWindow() {
+        AccessibilityPermissionWindow.shared.show {
+            // Callback khi quyền được cấp
+            print("DEBUG: Permission granted callback")
+        }
+    }
+    
     func applicationWillTerminate(_ notification: Notification) {
         // Đóng tất cả các cửa sổ khi ứng dụng kết thúc
         BuyMeCoffeeWindow.shared.close()
         ContactWindow.shared.close()
+        AccessibilityPermissionWindow.shared.close()
     }
     
-    func showVirtualWindow() {
-        // Kích thước của cửa sổ
-        let windowSize = NSSize(width: 300, height: 450)
-        
-        // Tạo cửa sổ ảo
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: windowSize.width, height: windowSize.height),
-                           styleMask: [.borderless],
-                           backing: .buffered,
-                           defer: false)
-        
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        
-        // Lấy vị trí của menu bar icon
-        if let statusItem = statusItem, let button = statusItem.button {
-            let buttonFrame = button.window?.frame ?? .zero
-            let screenFrame = NSScreen.main?.frame ?? .zero
-            
-            // Đặt vị trí cửa sổ ngay dưới menu bar icon
-            let windowFrame = NSRect(x: buttonFrame.minX - 150 + buttonFrame.width/2,
-                                   y: buttonFrame.minY - windowSize.height,
-                                   width: windowSize.width,
-                                   height: windowSize.height)
-            panel.setFrame(windowFrame, display: true)
-        }
-        
-        // Helper để refresh view
-        func refreshPanelView() {
-            let items = self.clipboardManager.getHistory() ?? []
-            let clipboardView = ClipboardHistoryView(items: items, onItemSelected: { [weak self] item in
-                self?.handleItemSelected(item)
-                panel.close()
-            }, onClearAll: { [weak self] in
-                self?.clipboardManager.clearHistory()
-                refreshPanelView()
-            }, onCopyOnly: { item in
-                panel.close()
-            }, onTogglePin: { [weak self] item in
-                self?.clipboardManager.togglePin(item)
-                refreshPanelView()
-            }, onDeleteItem: { [weak self] item in
-                self?.clipboardManager.removeItem(item)
-                refreshPanelView()
-            }, onToggleBookmark: { [weak self] item in
-                self?.clipboardManager.toggleBookmark(item)
-                refreshPanelView()
-            }, onClearBookmarks: { [weak self] in
-                self?.clipboardManager.clearBookmarks()
-                refreshPanelView()
-            }, onClearByType: { [weak self] type in
-                self?.clipboardManager.clearByType(type)
-                refreshPanelView()
-            })
-            
-            let hostingView = NSHostingView(rootView: clipboardView)
-            hostingView.frame = NSRect(origin: .zero, size: windowSize)
-            panel.contentView = hostingView
-        }
-        
-        // Tạo view
-        refreshPanelView()
-        panel.makeKeyAndOrderFront(nil)
-        
-        // Thêm monitor cho sự kiện click chuột bên ngoài
-        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak panel] event in
-            if let panel = panel, panel.isVisible {
-                let location = event.locationInWindow
-                if !panel.frame.contains(location) {
-                    panel.close()
-                }
-            }
-        }
-        
-        // Lưu monitor để có thể remove sau
-        eventMonitor = monitor
-        virtualWindow = panel
-    }
+
 } 
