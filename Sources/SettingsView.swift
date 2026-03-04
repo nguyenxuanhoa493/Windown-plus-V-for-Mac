@@ -47,21 +47,23 @@ struct SettingsView: View {
     @StateObject private var shortcutViewModel = ShortcutViewModel()
     @State private var maxHistoryItems: Int
     @State private var selectedLanguage: Language
+    @State private var selectedTheme: ThemeMode
     
     init() {
         _maxHistoryItems = State(initialValue: Settings.shared.maxHistoryItems)
         _selectedLanguage = State(initialValue: Localization.shared.currentLanguage)
+        _selectedTheme = State(initialValue: Settings.shared.themeMode)
     }
     
     var body: some View {
         VStack(spacing: 20) {
             // Phần phím tắt
             VStack(alignment: .leading, spacing: 10) {
-                Text("Phím tắt")
+                Text(localization.localizedString("shortcut"))
                     .font(.headline)
                 
                 HStack {
-                    Text("Mở lịch sử clipboard:")
+                    Text(localization.localizedString("open_clipboard_history"))
                     Spacer()
                     Button(action: {
                         shortcutViewModel.startCaptureShortcut { newShortcut in
@@ -80,10 +82,10 @@ struct SettingsView: View {
             
             // Phần ngôn ngữ
             VStack(alignment: .leading, spacing: 10) {
-                Text("Ngôn ngữ")
+                Text(localization.localizedString("language"))
                     .font(.headline)
                 
-                Picker("Ngôn ngữ:", selection: $selectedLanguage) {
+                Picker(localization.localizedString("language") + ":", selection: $selectedLanguage) {
                     Text("Tiếng Việt").tag(Language.vietnamese)
                     Text("English").tag(Language.english)
                 }
@@ -96,13 +98,31 @@ struct SettingsView: View {
             
             Divider()
             
+            // Phần giao diện
+            VStack(alignment: .leading, spacing: 10) {
+                Text(localization.localizedString("appearance"))
+                    .font(.headline)
+                
+                Picker(localization.localizedString("theme"), selection: $selectedTheme) {
+                    ForEach(ThemeMode.allCases, id: \.self) { mode in
+                        Text(localization.localizedString("theme_\(mode.rawValue)")).tag(mode)
+                    }
+                }
+                .onChange(of: selectedTheme) { newValue in
+                    settings.themeMode = newValue
+                }
+            }
+            .padding(.horizontal)
+            
+            Divider()
+            
             // Phần lịch sử
             VStack(alignment: .leading, spacing: 10) {
-                Text("Lịch sử")
+                Text(localization.localizedString("history"))
                     .font(.headline)
                 
                 HStack {
-                    Text("Số lượng mục tối đa:")
+                    Text(localization.localizedString("max_history_items") + ":")
                     Spacer()
                     TextField("", value: $maxHistoryItems, formatter: NumberFormatter())
                         .frame(width: 60)
@@ -116,7 +136,7 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(.vertical)
-        .frame(width: 400, height: 300)
+        .frame(width: 400, height: 400)
         .onDisappear {
             shortcutViewModel.stopCaptureShortcut()
         }

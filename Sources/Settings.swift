@@ -1,6 +1,20 @@
 import Foundation
 import SwiftUI
 
+enum ThemeMode: String, CaseIterable {
+    case system = "system"
+    case light = "light"
+    case dark = "dark"
+    
+    var displayName: String {
+        switch self {
+        case .system: return "Hệ thống"
+        case .light: return "Sáng"
+        case .dark: return "Tối"
+        }
+    }
+}
+
 extension Notification.Name {
     static let shortcutChanged = Notification.Name("shortcutChanged")
 }
@@ -48,6 +62,24 @@ class Settings: ObservableObject {
         }
     }
     
+    @Published var themeMode: ThemeMode {
+        didSet {
+            UserDefaults.standard.set(themeMode.rawValue, forKey: "themeMode")
+            applyTheme()
+        }
+    }
+    
+    func applyTheme() {
+        switch themeMode {
+        case .system:
+            NSApp.appearance = nil
+        case .light:
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+    
     init() {
         // Khởi tạo các thuộc tính cơ bản
         self.isAccessibilityEnabled = UserDefaults.standard.bool(forKey: "isAccessibilityEnabled")
@@ -57,6 +89,14 @@ class Settings: ObservableObject {
         // Khởi tạo maxHistoryItems với giá trị mặc định
         let savedMaxHistoryItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
         self.maxHistoryItems = savedMaxHistoryItems == 0 ? 50 : savedMaxHistoryItems
+        
+        // Khởi tạo themeMode
+        if let savedTheme = UserDefaults.standard.string(forKey: "themeMode"),
+           let mode = ThemeMode(rawValue: savedTheme) {
+            self.themeMode = mode
+        } else {
+            self.themeMode = .system
+        }
         
         // Khởi tạo shortcutKey và shortcutString
         self.shortcutKey = UserDefaults.standard.string(forKey: "shortcutKey") ?? "⌘V"

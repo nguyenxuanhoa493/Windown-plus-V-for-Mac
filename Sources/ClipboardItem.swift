@@ -17,11 +17,13 @@ struct ClipboardItem: Codable, Identifiable {
     let fileURL: String?
     let fileName: String?
     let isDirectory: Bool?
-    let timestamp: Date
+    var timestamp: Date
     let sourceAppName: String?
     let appBundleIdentifier: String?
     var isPinned: Bool
     var isBookmarked: Bool
+    var cachedIsJSON: Bool
+    var cachedIsExcelData: Bool
     
     var imageData: Data? {
         guard let fileName = imageFileName else { return nil }
@@ -43,6 +45,8 @@ struct ClipboardItem: Codable, Identifiable {
         self.appBundleIdentifier = appBundleIdentifier
         self.isPinned = isPinned
         self.isBookmarked = isBookmarked
+        self.cachedIsJSON = ClipboardItem.computeIsJSON(text)
+        self.cachedIsExcelData = ClipboardItem.computeIsExcelData(text)
     }
     
     init(imageFileName: String, timestamp: Date, sourceAppName: String? = nil, appBundleIdentifier: String? = nil, isPinned: Bool = false, isBookmarked: Bool = false) {
@@ -60,6 +64,8 @@ struct ClipboardItem: Codable, Identifiable {
         self.appBundleIdentifier = appBundleIdentifier
         self.isPinned = isPinned
         self.isBookmarked = isBookmarked
+        self.cachedIsJSON = false
+        self.cachedIsExcelData = false
     }
     
     init(fileURL: String, fileName: String, isDirectory: Bool = false, timestamp: Date, sourceAppName: String? = nil, appBundleIdentifier: String? = nil, isPinned: Bool = false, isBookmarked: Bool = false) {
@@ -77,6 +83,8 @@ struct ClipboardItem: Codable, Identifiable {
         self.appBundleIdentifier = appBundleIdentifier
         self.isPinned = isPinned
         self.isBookmarked = isBookmarked
+        self.cachedIsJSON = false
+        self.cachedIsExcelData = false
     }
     
     private static var appIconCache: [String: NSImage] = [:]
@@ -112,15 +120,17 @@ struct ClipboardItem: Codable, Identifiable {
         return (text.count == 10 || text.count == 13) && number > 0
     }
     
-    // Kiểm tra xem text có phải là JSON không
-    var isJSON: Bool {
+    // Sử dụng cached value thay vì tính lại mỗi lần render
+    var isJSON: Bool { cachedIsJSON }
+    var isExcelData: Bool { cachedIsExcelData }
+    
+    static func computeIsJSON(_ text: String?) -> Bool {
         guard let text = text?.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return false }
         guard text.hasPrefix("{") || text.hasPrefix("[") else { return false }
         
         if let data = text.data(using: .utf8) {
             do {
                 let json = try JSONSerialization.jsonObject(with: data)
-                // Chỉ chấp nhận array hoặc dictionary
                 return json is [Any] || json is [String: Any]
             } catch {
                 return false
@@ -129,11 +139,9 @@ struct ClipboardItem: Codable, Identifiable {
         return false
     }
     
-    // Kiểm tra xem text có phải là dữ liệu từ Excel không (tab-separated hoặc CSV)
-    var isExcelData: Bool {
+    static func computeIsExcelData(_ text: String?) -> Bool {
         guard let text = text, !text.isEmpty else { return false }
         
-        // Remove leading/trailing quotes if present
         let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
         
@@ -143,13 +151,11 @@ struct ClipboardItem: Codable, Identifiable {
             return !cleaned.isEmpty
         }
         
-        guard lines.count >= 2 else { return false } // Cần ít nhất 2 dòng (header + data)
+        guard lines.count >= 2 else { return false }
         
-        // Kiểm tra tab-separated (phổ biến nhất khi copy từ Excel)
         let firstLine = lines[0].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
         let tabCount = firstLine.components(separatedBy: "\t").count
         if tabCount >= 2 {
-            // Kiểm tra các dòng khác cũng có số tab tương tự
             let consistentTabs = lines.allSatisfy { line in
                 let cleanLine = line.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                 let count = cleanLine.components(separatedBy: "\t").count

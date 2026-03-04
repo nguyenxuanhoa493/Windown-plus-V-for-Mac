@@ -1,5 +1,6 @@
 import SwiftUI
 import Cocoa
+import libxlsxwriter
 
 enum ContentFilter: String, CaseIterable {
     case all = "Tất cả"
@@ -40,6 +41,11 @@ struct ClipboardHistoryView: View {
     let onClearBookmarks: (() -> Void)?
     let onClearByType: ((ClipboardItemType) -> Void)?
     @State private var selectedFilter: ContentFilter = .all
+    @State private var isSearching = false
+    @State private var searchText = ""
+    @State private var debouncedSearchText = ""
+    @State private var searchWorkItem: DispatchWorkItem?
+    @State private var isSearchFieldFocused = false
     
     // Helper để check file có phải ảnh không
     private func isImageFile(_ item: ClipboardItem) -> Bool {
@@ -49,20 +55,53 @@ struct ClipboardHistoryView: View {
         return imageExtensions.contains(fileExtension)
     }
     
+    // Bỏ dấu tiếng Việt
+    private static func removeDiacritics(_ str: String) -> String {
+        return str.folding(options: .diacriticInsensitive, locale: Locale(identifier: "vi"))
+    }
+    
+    private func matchesSearch(_ item: ClipboardItem, _ query: String) -> Bool {
+        guard !query.isEmpty else { return true }
+        guard let text = item.text else { return false }
+        let normalizedText = ClipboardHistoryView.removeDiacritics(text.lowercased())
+        let normalizedQuery = ClipboardHistoryView.removeDiacritics(query.lowercased())
+        return normalizedText.contains(normalizedQuery)
+    }
+    
     var filteredItems: [ClipboardItem] {
+        var result: [ClipboardItem]
         switch selectedFilter {
         case .all:
-            return items
+            result = items.filter { !$0.isBookmarked }
         case .text:
-            return items.filter { $0.type == .text }
+            result = items.filter { $0.type == .text && !$0.isBookmarked }
         case .image:
-            // Hiển thị cả item image và file ảnh
-            return items.filter { $0.type == .image || isImageFile($0) }
+            result = items.filter { ($0.type == .image || isImageFile($0)) && !$0.isBookmarked }
         case .file:
-            return items.filter { $0.type == .file }
+            result = items.filter { $0.type == .file && !$0.isBookmarked }
         case .bookmark:
-            return items.filter { $0.isBookmarked }
+            result = items.filter { $0.isBookmarked }
         }
+        
+        if !debouncedSearchText.isEmpty {
+            result = result.filter { matchesSearch($0, debouncedSearchText) }
+        }
+        return result
+    }
+    
+    private func focusSearchField() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            isSearchFieldFocused = true
+        }
+    }
+    
+    private func debounceSearch(_ text: String) {
+        searchWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            debouncedSearchText = text
+        }
+        searchWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
     
     var body: some View {
@@ -72,6 +111,9 @@ struct ClipboardHistoryView: View {
                 ForEach(ContentFilter.allCases, id: \.self) { filter in
                     Button(action: {
                         selectedFilter = filter
+                        if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                            window.title = filter == .all ? "Clipboard" : "Clipboard - \(filter.rawValue)"
+                        }
                     }) {
                         Image(systemName: filter.icon)
                             .font(.system(size: 14))
@@ -107,6 +149,32 @@ struct ClipboardHistoryView: View {
                                 }
                             }
                     )
+                
+                Button(action: {
+                    if !isSearching {
+                        isSearching = true
+                        focusSearchField()
+                    } else {
+                        // Nếu đã mở thì focus lại vào ô search
+                        focusSearchField()
+                    }
+                }) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14))
+                        .frame(width: 32, height: 28)
+                        .background(isSearching ? Color.accentColor : Color(.controlBackgroundColor))
+                        .foregroundColor(isSearching ? .white : .secondary)
+                        .cornerRadius(6)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Tìm kiếm")
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
                 
                 if !filteredItems.isEmpty {
                     Button(action: {
@@ -156,10 +224,49 @@ struct ClipboardHistoryView: View {
                     }
             )
             
+            // Search bar
+            if isSearching {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                    
+                    FocusableTextField(text: $searchText, placeholder: "Tìm kiếm...", isFocused: $isSearchFieldFocused)
+                        .frame(height: 22)
+                        .onChange(of: searchText) { newValue in
+                            debounceSearch(newValue)
+                        }
+                    
+                    if !searchText.isEmpty {
+                        Button(action: {
+                            searchText = ""
+                            debouncedSearchText = ""
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(.controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor.opacity(0.5), lineWidth: 1.5)
+                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+            }
+            
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 8) {
-                    ForEach(filteredItems) { item in
-                        ClipboardItemView(item: item, onItemSelected: onItemSelected, onCopyOnly: onCopyOnly, onTogglePin: onTogglePin, onDeleteItem: onDeleteItem, onToggleBookmark: onToggleBookmark)
+                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                        ClipboardItemView(item: item, index: index + 1, onItemSelected: onItemSelected, onCopyOnly: onCopyOnly, onTogglePin: onTogglePin, onDeleteItem: onDeleteItem, onToggleBookmark: onToggleBookmark)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -169,6 +276,86 @@ struct ClipboardHistoryView: View {
         }
         .frame(width: 300, height: 450)
         .background(Color(.windowBackgroundColor))
+        .onAppear {
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                // Nếu đang search rồi thì không xử lý
+                if isSearching { return event }
+                
+                // Bỏ qua phím đặc biệt (Enter, Escape, Tab, Arrow keys...)
+                let specialKeys: Set<UInt16> = [36, 53, 48, 123, 124, 125, 126, 51, 117]
+                if specialKeys.contains(event.keyCode) { return event }
+                
+                // Bỏ qua nếu có modifier (Cmd, Ctrl) trừ Shift và CapsLock
+                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .capsLock])
+                if !mods.isEmpty { return event }
+                
+                // Kích hoạt search khi gõ ký tự
+                if let chars = event.characters, !chars.isEmpty {
+                    isSearching = true
+                    searchText = chars
+                    debounceSearch(chars)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        isSearchFieldFocused = true
+                    }
+                    return nil
+                }
+                return event
+            }
+        }
+    }
+    
+}
+
+struct FocusableTextField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    @Binding var isFocused: Bool
+    
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = NSTextField()
+        textField.placeholderString = placeholder
+        textField.font = NSFont.systemFont(ofSize: 12)
+        textField.isBordered = false
+        textField.backgroundColor = .clear
+        textField.focusRingType = .none
+        textField.delegate = context.coordinator
+        return textField
+    }
+    
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        if isFocused {
+            DispatchQueue.main.async {
+                if let window = nsView.window {
+                    window.makeFirstResponder(nsView)
+                    // Di chuyển cursor về cuối
+                    if let editor = nsView.currentEditor() {
+                        editor.selectedRange = NSRange(location: nsView.stringValue.count, length: 0)
+                    }
+                    isFocused = false
+                }
+            }
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: FocusableTextField
+        
+        init(_ parent: FocusableTextField) {
+            self.parent = parent
+        }
+        
+        func controlTextDidChange(_ obj: Notification) {
+            if let textField = obj.object as? NSTextField {
+                parent.text = textField.stringValue
+            }
+        }
     }
 }
 
@@ -186,6 +373,7 @@ struct ClipboardItemView: View {
     }
     
     let item: ClipboardItem
+    let index: Int
     let onItemSelected: (ClipboardItem) -> Void
     let onCopyOnly: ((ClipboardItem) -> Void)?
     let onTogglePin: ((ClipboardItem) -> Void)?
@@ -196,6 +384,7 @@ struct ClipboardItemView: View {
     @State private var showAsTable = false
     @State private var showAsJSON = false
     @State private var displayText: String = ""
+    @State private var cachedImage: NSImage? = nil
     
     var typeIcon: String {
         switch item.type {
@@ -251,27 +440,24 @@ struct ClipboardItemView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 6) {
-                if item.type == .image, let imageData = item.imageData,
-                   let image = NSImage(data: imageData) {
-                    let imageHeight = min(image.size.height, 125)
+                if item.type == .image, let image = cachedImage {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFit()
-                        .frame(height: imageHeight)
+                        .frame(maxHeight: 50)
+                        .clipped()
                 } else if item.type == .file, let fileName = item.fileName, let fileURL = item.fileURL {
-                    // Nếu file là ảnh, hiển thị preview
                     if isImageFile(fileURL), let image = NSImage(contentsOfFile: fileURL) {
-                        let imageHeight = min(image.size.height, 125)
                         Image(nsImage: image)
                             .resizable()
                             .scaledToFit()
-                            .frame(height: imageHeight)
+                            .frame(maxHeight: 50)
+                            .clipped()
                     } else {
-                        // Hiển thị file info cho file thường và folder
                         HStack(spacing: 8) {
                             Image(nsImage: ClipboardItemView.cachedFileIcon(for: fileURL))
                                 .resizable()
-                                .frame(width: 32, height: 32)
+                                .frame(width: 24, height: 24)
                             
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(fileName)
@@ -286,7 +472,6 @@ struct ClipboardItemView: View {
                             
                             Spacer()
                         }
-                        .padding(.vertical, 8)
                     }
                 } else if item.text != nil {
                     HStack(spacing: 8) {
@@ -316,6 +501,14 @@ struct ClipboardItemView: View {
                 }
                 
                 HStack(spacing: 6) {
+                    Text("\(index)")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 14, minHeight: 14)
+                        .background(Color.accentColor.opacity(0.8))
+                        .cornerRadius(3)
+                    
                     if item.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 10))
@@ -418,20 +611,35 @@ struct ClipboardItemView: View {
                         }
                     }
                     
-                    // Conversion button for JSON data
+                    // Conversion and Export buttons for JSON data
                     if item.type == .text && item.isJSON {
-                        Button(action: {
-                            toggleJSONDisplay()
-                        }) {
-                            Image(systemName: showAsTable ? "curlybraces" : "tablecells")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white)
-                                .frame(width: 24, height: 24)
-                                .background(Color.purple)
-                                .cornerRadius(6)
+                        HStack(spacing: 4) {
+                            Button(action: {
+                                toggleJSONDisplay()
+                            }) {
+                                Image(systemName: showAsTable ? "curlybraces" : "tablecells")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white)
+                                    .frame(width: 24, height: 24)
+                                    .background(Color.purple)
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
+                            
+                            Button(action: {
+                                exportJSONToExcelAndOpen()
+                            }) {
+                                Image(systemName: "tablecells.badge.ellipsis")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white)
+                                    .frame(width: 24, height: 24)
+                                    .background(Color.green)
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Xuất Excel & Mở")
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .help(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
                         .onHover { hovering in
                             if hovering {
                                 NSCursor.pointingHand.push()
@@ -491,6 +699,10 @@ struct ClipboardItemView: View {
         }
         .background(isHovered ? Color(.selectedControlColor).opacity(0.3) : Color(.controlBackgroundColor))
         .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+        )
         .contentShape(Rectangle())
         .contextMenu {
             // Copy
@@ -543,6 +755,15 @@ struct ClipboardItemView: View {
                     HStack {
                         Image(systemName: showAsTable ? "curlybraces" : "tablecells")
                         Text(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
+                    }
+                }
+                
+                Button(action: {
+                    exportJSONToExcelAndOpen()
+                }) {
+                    HStack {
+                        Image(systemName: "tablecells.badge.ellipsis")
+                        Text("Xuất Excel & Mở")
                     }
                 }
                 
@@ -643,27 +864,22 @@ struct ClipboardItemView: View {
             }
         }
         .onDrag {
-            // Chỉ cho phép drag file/folder items
             if item.type == .file, let url = item.getFileURL() {
-                // Để force copy (không phải move), ta copy file vào temp location
-                // với tên unique, sau đó drag từ temp location
                 let uniqueID = UUID().uuidString
                 let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ClipboardDrag-\(uniqueID)")
                 let tempURL = tempDir.appendingPathComponent(url.lastPathComponent)
                 
                 do {
-                    // Tạo temp directory
                     try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-                    
-                    // Copy file vào temp
                     try FileManager.default.copyItem(at: url, to: tempURL)
                     
-                    // Drag từ temp location - destination sẽ copy/move file này
-                    // Khi drag từ temp location, macOS thường copy thay vì move
+                    // Cleanup temp sau 30s
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) {
+                        try? FileManager.default.removeItem(at: tempDir)
+                    }
+                    
                     return NSItemProvider(object: tempURL as NSURL)
                 } catch {
-                    print("Error preparing file for drag: \(error)")
-                    // Fallback: drag original file (có thể move)
                     return NSItemProvider(object: url as NSURL)
                 }
             }
@@ -704,6 +920,110 @@ struct ClipboardItemView: View {
     private func updateDisplayText() {
         if let text = item.text {
             displayText = text
+        }
+        if item.type == .image, cachedImage == nil,
+           let imageData = item.imageData {
+            cachedImage = NSImage(data: imageData)
+        }
+    }
+    
+    private func exportJSONToExcelAndOpen() {
+        guard let text = item.text, item.isJSON else { return }
+        guard let data = text.data(using: .utf8) else { return }
+        
+        do {
+            let json = try JSONSerialization.jsonObject(with: data)
+            
+            func flattenJSON(_ json: Any, prefix: String = "") -> [String: Any] {
+                var result: [String: Any] = [:]
+                if let dict = json as? [String: Any] {
+                    for (key, value) in dict {
+                        let newKey = prefix.isEmpty ? key : "\(prefix).\(key)"
+                        if let subDict = value as? [String: Any] {
+                            result.merge(flattenJSON(subDict, prefix: newKey)) { (_, new) in new }
+                        } else if let subArray = value as? [Any] {
+                            if subArray.allSatisfy({ $0 is [String: Any] == false && $0 is [Any] == false }) {
+                                result[newKey] = subArray.map { "\($0)" }.joined(separator: ", ")
+                            } else {
+                                if let jsonData = try? JSONSerialization.data(withJSONObject: subArray, options: []),
+                                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                                    result[newKey] = jsonString
+                                }
+                            }
+                        } else {
+                            result[newKey] = value
+                        }
+                    }
+                } else if prefix.isEmpty, let array = json as? [Any] {
+                    if array.allSatisfy({ $0 is [String: Any] == false && $0 is [Any] == false }) {
+                        result["Value"] = array.map { "\($0)" }.joined(separator: ", ")
+                    }
+                }
+                return result
+            }
+            
+            let fileName = "clipboard_\(Int(Date().timeIntervalSince1970)).xlsx"
+            let tempPath = (FileManager.default.temporaryDirectory.appendingPathComponent(fileName).path as NSString).utf8String
+            
+            let workbook = workbook_new(tempPath)
+            let worksheet = workbook_add_worksheet(workbook, nil)
+            
+            // Format cho header
+            let headerFormat = workbook_add_format(workbook)
+            format_set_bold(headerFormat)
+            format_set_bg_color(headerFormat, 0xD7E4BC) // Màu xanh nhạt
+            format_set_border(headerFormat, 1) // LXW_BORDER_THIN
+            
+            if let array = json as? [Any] {
+                if array.first is [String: Any] {
+                    let flattenedArray = array.map { flattenJSON($0) }
+                    var allKeys = Set<String>()
+                    for item in flattenedArray {
+                        allKeys.formUnion(item.keys)
+                    }
+                    let headers = Array(allKeys).sorted()
+                    
+                    // Ghi header
+                    for (col, header) in headers.enumerated() {
+                        worksheet_write_string(worksheet, 0, UInt16(col), header, headerFormat)
+                        worksheet_set_column(worksheet, UInt16(col), UInt16(col), 20, nil)
+                    }
+                    
+                    // Ghi data
+                    for (row, item) in flattenedArray.enumerated() {
+                        for (col, header) in headers.enumerated() {
+                            let value = "\(item[header] ?? "")"
+                            worksheet_write_string(worksheet, UInt32(row + 1), UInt16(col), value, nil)
+                        }
+                    }
+                } else {
+                    // Mảng các giá trị đơn giản
+                    worksheet_write_string(worksheet, 0, 0, "Value", headerFormat)
+                    worksheet_set_column(worksheet, 0, 0, 40, nil)
+                    for (row, value) in array.enumerated() {
+                        worksheet_write_string(worksheet, UInt32(row + 1), 0, "\(value)", nil)
+                    }
+                }
+            } else if let dict = json as? [String: Any] {
+                let flattened = flattenJSON(dict)
+                let sortedKeys = flattened.keys.sorted()
+                
+                worksheet_write_string(worksheet, 0, 0, "Key", headerFormat)
+                worksheet_write_string(worksheet, 0, 1, "Value", headerFormat)
+                worksheet_set_column(worksheet, 0, 0, 25, nil)
+                worksheet_set_column(worksheet, 1, 1, 40, nil)
+                
+                for (row, key) in sortedKeys.enumerated() {
+                    worksheet_write_string(worksheet, UInt32(row + 1), 0, key, nil)
+                    worksheet_write_string(worksheet, UInt32(row + 1), 1, "\(flattened[key] ?? "")", nil)
+                }
+            }
+            
+            workbook_close(workbook)
+            
+            NSWorkspace.shared.open(FileManager.default.temporaryDirectory.appendingPathComponent(fileName))
+        } catch {
+            print("Error exporting JSON to XLSX: \(error)")
         }
     }
     

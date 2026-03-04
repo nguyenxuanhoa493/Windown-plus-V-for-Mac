@@ -43,6 +43,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         
+        // Áp dụng theme đã lưu
+        Settings.shared.applyTheme()
+        
         // Khởi tạo clipboard manager
         clipboardManager.startMonitoring()
         
@@ -220,13 +223,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.title = "Lịch sử Clipboard"
+        panel.title = "Clipboard"
         panel.isFloatingPanel = true
         panel.level = .popUpMenu
         panel.hidesOnDeactivate = false
         panel.backgroundColor = .clear
         panel.isMovableByWindowBackground = false
-        panel.titlebarAppearsTransparent = true
+        panel.titlebarAppearsTransparent = false
         panel.standardWindowButton(.closeButton)?.isHidden = false
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
@@ -314,6 +317,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Đợi window đóng và app ban đầu được focus trở lại
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            // Ignore clipboard change do paste gây ra
+            self.clipboardManager.ignoreNextChange()
             // Paste nội dung
             item.paste()
             

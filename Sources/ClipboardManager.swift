@@ -7,7 +7,7 @@ class ClipboardManager {
     private var changeCount: Int = 0
     private var timer: Timer?
     private var history: [ClipboardItem] = []
-    private let maxHistoryItems = 20
+    private var maxHistoryItems: Int { Settings.shared.maxHistoryItems }
     private var isIgnoringChanges = false
     
     private lazy var imageCacheDirectory: URL = {
@@ -61,7 +61,7 @@ class ClipboardManager {
                 }
             }
             // Kiểm tra text TRƯỚC image (để Excel data được lưu dưới dạng text, không phải image)
-            else if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            else if let text = pasteboard.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 // Lấy tất cả format data để giữ nguyên format
                 let rtfData = pasteboard.data(forType: .rtf)
                 let htmlData = pasteboard.data(forType: .html)
@@ -114,13 +114,19 @@ class ClipboardManager {
     }
     
     private func removeOldestNonBookmarkedIfNeeded() {
-        let nonBookmarkedCount = history.filter { !$0.isBookmarked }.count
-        
-        if nonBookmarkedCount > maxHistoryItems {
-            if let oldestIndex = history.lastIndex(where: { !$0.isBookmarked }) {
-                deleteImageFromDisk(history[oldestIndex].imageFileName)
-                history.remove(at: oldestIndex)
+        // Duyệt 1 lần: đếm + tìm oldest index cùng lúc
+        var nonBookmarkedCount = 0
+        var oldestIndex: Int? = nil
+        for i in 0..<history.count {
+            if !history[i].isBookmarked {
+                nonBookmarkedCount += 1
+                oldestIndex = i // luôn cập nhật → cuối cùng sẽ là index cuối
             }
+        }
+        
+        if nonBookmarkedCount > maxHistoryItems, let idx = oldestIndex {
+            deleteImageFromDisk(history[idx].imageFileName)
+            history.remove(at: idx)
         }
     }
     
@@ -134,6 +140,7 @@ class ClipboardManager {
         if let existingIndex = history.firstIndex(where: { $0.text == text }) {
             let existing = history[existingIndex]
             if !existing.isPinned {
+                deleteImageFromDisk(existing.imageFileName)
                 history.remove(at: existingIndex)
                 history.insert(newItem, at: 0)
                 removeOldestNonBookmarkedIfNeeded()
@@ -177,6 +184,7 @@ class ClipboardManager {
     private var saveWorkItem: DispatchWorkItem?
     
     private func saveHistory() {
+        invalidateSortCache()
         saveWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
@@ -196,14 +204,24 @@ class ClipboardManager {
         }
     }
     
+    private var sortedHistoryCache: [ClipboardItem]?
+    
     func getHistory() -> [ClipboardItem]? {
-        // Sắp xếp: pinned items trước, sau đó theo timestamp
-        return history.sorted { item1, item2 in
+        if let cached = sortedHistoryCache {
+            return cached
+        }
+        let sorted = history.sorted { item1, item2 in
             if item1.isPinned != item2.isPinned {
                 return item1.isPinned
             }
             return item1.timestamp > item2.timestamp
         }
+        sortedHistoryCache = sorted
+        return sorted
+    }
+    
+    private func invalidateSortCache() {
+        sortedHistoryCache = nil
     }
     
     func copyToClipboard(_ item: ClipboardItem) {
@@ -274,8 +292,9 @@ class ClipboardManager {
             return
         }
         
-        // Di chuyển item lên đầu
-        let movedItem = history.remove(at: index)
+        // Di chuyển item lên đầu và cập nhật timestamp
+        var movedItem = history.remove(at: index)
+        movedItem.timestamp = Date()
         history.insert(movedItem, at: 0)
         saveHistory()
     }
