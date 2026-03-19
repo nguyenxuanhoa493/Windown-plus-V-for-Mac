@@ -4,6 +4,64 @@ extension View {
     func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
         clipShape(RoundedCorner(radius: radius, corners: corners))
     }
+    
+    func tooltip(_ text: String) -> some View {
+        self.modifier(TooltipModifier(text: text))
+    }
+}
+
+struct TooltipModifier: ViewModifier {
+    let text: String
+    @State private var isHovering = false
+    @State private var showTooltip = false
+    @State private var hoverTask: DispatchWorkItem?
+    
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                Group {
+                    if showTooltip {
+                        Text(text)
+                            .font(.system(size: 11))
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color(NSColor.controlBackgroundColor))
+                                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(Color(NSColor.separatorColor), lineWidth: 0.5)
+                            )
+                            .fixedSize()
+                            .offset(y: 30)
+                            .zIndex(1000)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
+                },
+                alignment: .top
+            )
+            .onHover { hovering in
+                isHovering = hovering
+                hoverTask?.cancel()
+                if hovering {
+                    let task = DispatchWorkItem {
+                        withAnimation(.easeIn(duration: 0.15)) {
+                            showTooltip = true
+                        }
+                    }
+                    hoverTask = task
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
+                } else {
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        showTooltip = false
+                    }
+                }
+            }
+    }
 }
 
 struct RoundedCorner: Shape {

@@ -41,7 +41,21 @@ class Localization: ObservableObject {
         "save_and_close": [.english: "Save & Close", .vietnamese: "Lưu & Đóng"],
         "buy_coffee": [.english: "Buy me a coffee", .vietnamese: "Mua cho tôi một ly cà phê"],
         "contact": [.english: "Contact & Feedback", .vietnamese: "Liên hệ & góp ý"],
-        "quit": [.english: "Quit", .vietnamese: "Thoát"]
+        "quit": [.english: "Quit", .vietnamese: "Thoát"],
+        "check_for_updates": [.english: "Check for Updates", .vietnamese: "Kiểm tra cập nhật"],
+        "update_available": [.english: "Update Available", .vietnamese: "Có bản cập nhật mới"],
+        "update_new_version": [.english: "Version %@ is available (current: %@)", .vietnamese: "Phiên bản %@ đã có (hiện tại: %@)"],
+        "update_download": [.english: "Download & Install", .vietnamese: "Tải & Cài đặt"],
+        "update_later": [.english: "Later", .vietnamese: "Để sau"],
+        "update_no_update": [.english: "No Update Available", .vietnamese: "Không có bản cập nhật"],
+        "update_current_version": [.english: "You are using the latest version (%@)", .vietnamese: "Bạn đang dùng phiên bản mới nhất (%@)"],
+        "update_ready": [.english: "Update Ready", .vietnamese: "Sẵn sàng cập nhật"],
+        "update_restart_message": [.english: "The app needs to restart to complete the update. Your permissions will be preserved.", .vietnamese: "Ứng dụng cần khởi động lại để hoàn tất cập nhật. Quyền truy cập sẽ được giữ nguyên."],
+        "update_restart_now": [.english: "Restart Now", .vietnamese: "Khởi động lại ngay"],
+        "update_checking": [.english: "Checking for updates...", .vietnamese: "Đang kiểm tra cập nhật..."],
+        "update_downloading": [.english: "Downloading update...", .vietnamese: "Đang tải bản cập nhật..."],
+        "update_version": [.english: "Version", .vietnamese: "Phiên bản"],
+        "update_auto_check": [.english: "Check for updates on launch", .vietnamese: "Tự động kiểm tra khi khởi động"]
     ]
     
     init() {

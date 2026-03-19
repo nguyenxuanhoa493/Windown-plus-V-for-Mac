@@ -114,17 +114,17 @@ class ClipboardManager {
     }
     
     private func removeOldestNonBookmarkedIfNeeded() {
-        // Duyệt 1 lần: đếm + tìm oldest index cùng lúc
-        var nonBookmarkedCount = 0
-        var oldestIndex: Int? = nil
-        for i in 0..<history.count {
-            if !history[i].isBookmarked {
-                nonBookmarkedCount += 1
-                oldestIndex = i // luôn cập nhật → cuối cùng sẽ là index cuối
+        while history.count > maxHistoryItems {
+            // Tìm item non-protected cũ nhất (cuối mảng) để xóa
+            var oldestIndex: Int? = nil
+            for i in stride(from: history.count - 1, through: 0, by: -1) {
+                if !history[i].isBookmarked && !history[i].isPinned {
+                    oldestIndex = i
+                    break
+                }
             }
-        }
-        
-        if nonBookmarkedCount > maxHistoryItems, let idx = oldestIndex {
+            
+            guard let idx = oldestIndex else { break }
             deleteImageFromDisk(history[idx].imageFileName)
             history.remove(at: idx)
         }
@@ -252,10 +252,10 @@ class ClipboardManager {
     }
     
     func clearHistory() {
-        for item in history where !item.isBookmarked {
+        for item in history where !item.isBookmarked && !item.isPinned {
             deleteImageFromDisk(item.imageFileName)
         }
-        history.removeAll(where: { !$0.isBookmarked })
+        history.removeAll(where: { !$0.isBookmarked && !$0.isPinned })
         saveHistory()
     }
     
@@ -267,10 +267,10 @@ class ClipboardManager {
     }
     
     func clearByType(_ type: ClipboardItemType) {
-        for item in history where item.type == type && !item.isBookmarked {
+        for item in history where item.type == type && !item.isBookmarked && !item.isPinned {
             deleteImageFromDisk(item.imageFileName)
         }
-        history.removeAll(where: { $0.type == type && !$0.isBookmarked })
+        history.removeAll(where: { $0.type == type && !$0.isBookmarked && !$0.isPinned })
         saveHistory()
     }
     

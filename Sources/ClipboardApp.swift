@@ -67,6 +67,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: .languageChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(shortcutChanged), name: .shortcutChanged, object: nil)
         
+        // Tự động kiểm tra cập nhật (silent)
+        if Settings.shared.autoCheckForUpdates {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                UpdateManager.shared.checkForUpdates(silent: true)
+            }
+        }
+        
         print("DEBUG: Ứng dụng đã khởi động xong")
     }
     
@@ -112,6 +119,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let contactItem = NSMenuItem(title: Localization.shared.localizedString("contact"), action: #selector(showContact), keyEquivalent: "")
         contactItem.target = self
         menu.addItem(contactItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        let updateItem = NSMenuItem(title: Localization.shared.localizedString("check_for_updates"), action: #selector(checkForUpdates), keyEquivalent: "u")
+        updateItem.target = self
+        menu.addItem(updateItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -200,6 +213,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showContact() {
         print("DEBUG: Đang mở cửa sổ Liên hệ & góp ý...")
         ContactWindow.shared.show()
+    }
+    
+    @objc func checkForUpdates() {
+        UpdateManager.shared.checkForUpdates()
     }
     
     @objc func openFacebook() {

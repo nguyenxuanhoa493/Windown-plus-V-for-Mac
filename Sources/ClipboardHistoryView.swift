@@ -123,7 +123,7 @@ struct ClipboardHistoryView: View {
                             .cornerRadius(6)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(filter.rawValue)
+                    .tooltip(filter.rawValue)
                     .onHover { hovering in
                         if hovering {
                             NSCursor.pointingHand.push()
@@ -167,7 +167,7 @@ struct ClipboardHistoryView: View {
                         .cornerRadius(6)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Tìm kiếm")
+                .tooltip("Tìm kiếm")
                 .onHover { hovering in
                     if hovering {
                         NSCursor.pointingHand.push()
@@ -196,7 +196,7 @@ struct ClipboardHistoryView: View {
                             .padding(8)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Xóa \(selectedFilter.rawValue.lowercased())")
+                    .tooltip("Xóa \(selectedFilter.rawValue.lowercased())")
                     .onHover { hovering in
                         if hovering {
                             NSCursor.pointingHand.push()
@@ -488,7 +488,7 @@ struct ClipboardItemView: View {
                                     .foregroundColor(.accentColor)
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .help(showAsDateTime ? "Hiển thị timestamp" : "Hiển thị ngày giờ")
+                            .tooltip(showAsDateTime ? "Hiển thị timestamp" : "Hiển thị ngày giờ")
                             .onHover { hovering in
                                 if hovering {
                                     NSCursor.pointingHand.push()
@@ -577,7 +577,7 @@ struct ClipboardItemView: View {
                                 .cornerRadius(6)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Mở")
+                        .tooltip("Mở")
                         .onHover { hovering in
                             if hovering {
                                 NSCursor.pointingHand.push()
@@ -601,7 +601,7 @@ struct ClipboardItemView: View {
                                 .cornerRadius(6)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Mở URL trong trình duyệt")
+                        .tooltip("Mở URL trong trình duyệt")
                         .onHover { hovering in
                             if hovering {
                                 NSCursor.pointingHand.push()
@@ -625,7 +625,7 @@ struct ClipboardItemView: View {
                                     .cornerRadius(6)
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .help(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
+                            .tooltip(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
                             
                             Button(action: {
                                 exportJSONToExcelAndOpen()
@@ -638,7 +638,7 @@ struct ClipboardItemView: View {
                                     .cornerRadius(6)
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .help("Xuất Excel & Mở")
+                            .tooltip("Xuất Excel & Mở")
                         }
                         .onHover { hovering in
                             if hovering {
@@ -662,7 +662,30 @@ struct ClipboardItemView: View {
                                 .cornerRadius(6)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(showAsJSON ? "Hiển thị dạng bảng" : "Hiển thị JSON")
+                        .tooltip(showAsJSON ? "Hiển thị dạng bảng" : "Hiển thị JSON")
+                        .onHover { hovering in
+                            if hovering {
+                                NSCursor.pointingHand.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
+                    }
+                    
+                    // Save image button (chỉ hiện cho ảnh không phải tệp tin)
+                    if item.type == .image {
+                        Button(action: {
+                            saveImageToFile()
+                        }) {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white)
+                                .frame(width: 24, height: 24)
+                                .background(Color.green)
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .tooltip("Lưu ảnh")
                         .onHover { hovering in
                             if hovering {
                                 NSCursor.pointingHand.push()
@@ -685,7 +708,7 @@ struct ClipboardItemView: View {
                             .cornerRadius(6)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Sao chép")
+                    .tooltip("Sao chép")
                     .onHover { hovering in
                         if hovering {
                             NSCursor.pointingHand.push()
@@ -713,6 +736,18 @@ struct ClipboardItemView: View {
                 HStack {
                     Image(systemName: "doc.on.doc")
                     Text("Sao chép")
+                }
+            }
+            
+            // Save image (chỉ hiện cho ảnh không phải tệp tin)
+            if item.type == .image {
+                Button(action: {
+                    saveImageToFile()
+                }) {
+                    HStack {
+                        Image(systemName: "square.and.arrow.down")
+                        Text("Lưu ảnh")
+                    }
                 }
             }
             
@@ -1040,6 +1075,24 @@ struct ClipboardItemView: View {
             // Show original timestamp
             if let text = item.text {
                 displayText = text
+            }
+        }
+    }
+    
+    private func saveImageToFile() {
+        guard item.type == .image, let imageData = item.imageData else { return }
+        
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.png]
+        savePanel.nameFieldStringValue = "Clipboard_\(item.timeString.replacingOccurrences(of: ":", with: "-")).png"
+        savePanel.level = .floating
+        
+        if savePanel.runModal() == .OK, let url = savePanel.url {
+            if let image = NSImage(data: imageData),
+               let tiffData = image.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiffData),
+               let pngData = bitmap.representation(using: .png, properties: [:]) {
+                try? pngData.write(to: url)
             }
         }
     }

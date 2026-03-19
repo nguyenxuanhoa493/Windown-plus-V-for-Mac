@@ -62,6 +62,12 @@ class Settings: ObservableObject {
         }
     }
     
+    @Published var autoCheckForUpdates: Bool {
+        didSet {
+            UserDefaults.standard.set(autoCheckForUpdates, forKey: "autoCheckForUpdates")
+        }
+    }
+    
     @Published var themeMode: ThemeMode {
         didSet {
             UserDefaults.standard.set(themeMode.rawValue, forKey: "themeMode")
@@ -85,6 +91,13 @@ class Settings: ObservableObject {
         self.isAccessibilityEnabled = UserDefaults.standard.bool(forKey: "isAccessibilityEnabled")
         self.shortcutKeyCode = UInt32(UserDefaults.standard.integer(forKey: "shortcutKeyCode"))
         self.shortcutModifiers = NSEvent.ModifierFlags(rawValue: UInt(UserDefaults.standard.integer(forKey: "shortcutModifiers")))
+        
+        // Auto check for updates (default: true)
+        if UserDefaults.standard.object(forKey: "autoCheckForUpdates") == nil {
+            self.autoCheckForUpdates = true
+        } else {
+            self.autoCheckForUpdates = UserDefaults.standard.bool(forKey: "autoCheckForUpdates")
+        }
         
         // Khởi tạo maxHistoryItems với giá trị mặc định
         let savedMaxHistoryItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
