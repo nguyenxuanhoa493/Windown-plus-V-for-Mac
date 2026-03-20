@@ -282,6 +282,10 @@ class AccessibilityPermissionWindow: NSWindow {
             DispatchQueue.main.async {
                 self.close()
                 
+                // Activate app để alert hiển thị được (app đang ở accessory mode)
+                NSApp.setActivationPolicy(.regular)
+                NSApp.activate(ignoringOtherApps: true)
+                
                 // Show success alert
                 let alert = NSAlert()
                 alert.messageText = "Thành công! ✅"
@@ -289,6 +293,9 @@ class AccessibilityPermissionWindow: NSWindow {
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
+                
+                // Quay về accessory mode
+                NSApp.setActivationPolicy(.accessory)
                 
                 // Gọi callback nếu có
                 self.onPermissionGranted?()
