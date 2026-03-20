@@ -280,13 +280,9 @@ class AccessibilityPermissionWindow: NSWindow {
             stopCheckingPermission()
             
             DispatchQueue.main.async {
-                self.close()
-                
-                // Activate app để alert hiển thị được (app đang ở accessory mode)
-                NSApp.setActivationPolicy(.regular)
+                // Show alert TRƯỚC khi close window (để app vẫn còn active)
                 NSApp.activate(ignoringOtherApps: true)
                 
-                // Show success alert
                 let alert = NSAlert()
                 alert.messageText = "Thành công! ✅"
                 alert.informativeText = "Clipboard đã có quyền Accessibility. Bạn có thể bắt đầu sử dụng app."
@@ -294,8 +290,8 @@ class AccessibilityPermissionWindow: NSWindow {
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
                 
-                // Quay về accessory mode
-                NSApp.setActivationPolicy(.accessory)
+                // Đóng window sau khi user bấm OK
+                self.close()
                 
                 // Gọi callback nếu có
                 self.onPermissionGranted?()
