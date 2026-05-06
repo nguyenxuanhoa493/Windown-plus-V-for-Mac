@@ -59,10 +59,26 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: 16) {
-                    // Language & Appearance row
+        TabView {
+            generalTab
+                .tabItem {
+                    Label(localization.localizedString("tab_general"), systemImage: "gearshape")
+                }
+            featuresTab
+                .tabItem {
+                    Label(localization.localizedString("tab_features"), systemImage: "switch.2")
+                }
+        }
+        .frame(width: 400, height: 460)
+        .onDisappear {
+            shortcutViewModel.stopCaptureShortcut()
+        }
+    }
+
+    private var generalTab: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Language & Appearance row
                     HStack(spacing: 12) {
                         settingsCard {
                             VStack(alignment: .leading, spacing: 8) {
@@ -230,16 +246,98 @@ struct SettingsView: View {
                             }
                         }
                     }
-                }
-                .padding(16)
             }
-        }
-        .frame(width: 380, height: 400)
-        .onDisappear {
-            shortcutViewModel.stopCaptureShortcut()
+            .padding(16)
         }
     }
-    
+
+    private var featuresTab: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                featureToggleRow(
+                    icon: "arrow.up.to.line",
+                    titleKey: "feature_move_to_top",
+                    isOn: Binding(
+                        get: { settings.moveToTopAfterPaste },
+                        set: { settings.moveToTopAfterPaste = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "tablecells",
+                    titleKey: "feature_json_to_table",
+                    isOn: Binding(
+                        get: { settings.enableJSONToTable },
+                        set: { settings.enableJSONToTable = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "tablecells.badge.ellipsis",
+                    titleKey: "feature_json_to_excel",
+                    isOn: Binding(
+                        get: { settings.enableJSONToExcel },
+                        set: { settings.enableJSONToExcel = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "curlybraces",
+                    titleKey: "feature_table_to_json",
+                    isOn: Binding(
+                        get: { settings.enableTableToJSON },
+                        set: { settings.enableTableToJSON = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "arrow.up.forward.square",
+                    titleKey: "feature_open_url",
+                    isOn: Binding(
+                        get: { settings.enableOpenURLInBrowser },
+                        set: { settings.enableOpenURLInBrowser = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "calendar.badge.clock",
+                    titleKey: "feature_timestamp",
+                    isOn: Binding(
+                        get: { settings.enableTimestampConvert },
+                        set: { settings.enableTimestampConvert = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "magnifyingglass",
+                    titleKey: "feature_search",
+                    isOn: Binding(
+                        get: { settings.enableSearch },
+                        set: { settings.enableSearch = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "hand.draw",
+                    titleKey: "feature_drag_drop",
+                    isOn: Binding(
+                        get: { settings.enableDragAndDrop },
+                        set: { settings.enableDragAndDrop = $0 }
+                    )
+                )
+            }
+            .padding(16)
+        }
+    }
+
+    @ViewBuilder
+    private func featureToggleRow(icon: String, titleKey: String, isOn: Binding<Bool>) -> some View {
+        settingsCard {
+            HStack {
+                Label(localization.localizedString(titleKey), systemImage: icon)
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                Toggle("", isOn: isOn)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+        }
+    }
+
     // MARK: - Components
     
     @ViewBuilder

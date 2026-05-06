@@ -40,6 +40,7 @@ struct ClipboardHistoryView: View {
     let onToggleBookmark: ((ClipboardItem) -> Void)?
     let onClearBookmarks: (() -> Void)?
     let onClearByType: ((ClipboardItemType) -> Void)?
+    @ObservedObject private var settings = Settings.shared
     @State private var selectedFilter: ContentFilter = .all
     @State private var isSearching = false
     @State private var searchText = ""
@@ -150,29 +151,31 @@ struct ClipboardHistoryView: View {
                             }
                     )
                 
-                Button(action: {
-                    if !isSearching {
-                        isSearching = true
-                        focusSearchField()
-                    } else {
-                        // Nếu đã mở thì focus lại vào ô search
-                        focusSearchField()
+                if settings.enableSearch {
+                    Button(action: {
+                        if !isSearching {
+                            isSearching = true
+                            focusSearchField()
+                        } else {
+                            // Nếu đã mở thì focus lại vào ô search
+                            focusSearchField()
+                        }
+                    }) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 14))
+                            .frame(width: 32, height: 28)
+                            .background(isSearching ? Color.accentColor : Color(.controlBackgroundColor))
+                            .foregroundColor(isSearching ? .white : .secondary)
+                            .cornerRadius(6)
                     }
-                }) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 14))
-                        .frame(width: 32, height: 28)
-                        .background(isSearching ? Color.accentColor : Color(.controlBackgroundColor))
-                        .foregroundColor(isSearching ? .white : .secondary)
-                        .cornerRadius(6)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .tooltip("Tìm kiếm")
-                .onHover { hovering in
-                    if hovering {
-                        NSCursor.pointingHand.push()
-                    } else {
-                        NSCursor.pop()
+                    .buttonStyle(PlainButtonStyle())
+                    .tooltip("Tìm kiếm")
+                    .onHover { hovering in
+                        if hovering {
+                            NSCursor.pointingHand.push()
+                        } else {
+                            NSCursor.pop()
+                        }
                     }
                 }
                 
@@ -278,6 +281,8 @@ struct ClipboardHistoryView: View {
         .background(Color(.windowBackgroundColor))
         .onAppear {
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                // Nếu user đã tắt tính năng search thì bỏ qua
+                if !Settings.shared.enableSearch { return event }
                 // Nếu đang search rồi thì không xử lý
                 if isSearching { return event }
                 
@@ -479,7 +484,7 @@ struct ClipboardItemView: View {
                             .lineLimit(3)
                             .font(.system(size: 11))
                         
-                        if item.isTimestamp {
+                        if item.isTimestamp && Settings.shared.enableTimestampConvert {
                             Button(action: {
                                 toggleTimestampDisplay()
                             }) {
@@ -585,7 +590,7 @@ struct ClipboardItemView: View {
                                 NSCursor.pop()
                             }
                         }
-                    } else if item.type == .text, let text = item.text, isURL(text), let url = getURL() {
+                    } else if item.type == .text, let text = item.text, isURL(text), let url = getURL(), Settings.shared.enableOpenURLInBrowser {
                         Button(action: {
                             NSWorkspace.shared.open(url)
                             // Đóng window
@@ -614,31 +619,35 @@ struct ClipboardItemView: View {
                     // Conversion and Export buttons for JSON data
                     if item.type == .text && item.isJSON {
                         HStack(spacing: 4) {
-                            Button(action: {
-                                toggleJSONDisplay()
-                            }) {
-                                Image(systemName: showAsTable ? "curlybraces" : "tablecells")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.white)
-                                    .frame(width: 24, height: 24)
-                                    .background(Color.purple)
-                                    .cornerRadius(6)
+                            if Settings.shared.enableJSONToTable {
+                                Button(action: {
+                                    toggleJSONDisplay()
+                                }) {
+                                    Image(systemName: showAsTable ? "curlybraces" : "tablecells")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.white)
+                                        .frame(width: 24, height: 24)
+                                        .background(Color.purple)
+                                        .cornerRadius(6)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .tooltip(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .tooltip(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
-                            
-                            Button(action: {
-                                exportJSONToExcelAndOpen()
-                            }) {
-                                Image(systemName: "tablecells.badge.ellipsis")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.white)
-                                    .frame(width: 24, height: 24)
-                                    .background(Color.green)
-                                    .cornerRadius(6)
+
+                            if Settings.shared.enableJSONToExcel {
+                                Button(action: {
+                                    exportJSONToExcelAndOpen()
+                                }) {
+                                    Image(systemName: "tablecells.badge.ellipsis")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.white)
+                                        .frame(width: 24, height: 24)
+                                        .background(Color.green)
+                                        .cornerRadius(6)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .tooltip("Xuất Excel & Mở")
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .tooltip("Xuất Excel & Mở")
                         }
                         .onHover { hovering in
                             if hovering {
@@ -650,7 +659,7 @@ struct ClipboardItemView: View {
                     }
                     
                     // Conversion button for Excel data
-                    if item.type == .text && item.isExcelData {
+                    if item.type == .text && item.isExcelData && Settings.shared.enableTableToJSON {
                         Button(action: {
                             toggleExcelDisplay()
                         }) {
@@ -899,20 +908,22 @@ struct ClipboardItemView: View {
             }
         }
         .onDrag {
+            // Tôn trọng toggle "Kéo thả file"
+            guard Settings.shared.enableDragAndDrop else { return NSItemProvider() }
             if item.type == .file, let url = item.getFileURL() {
                 let uniqueID = UUID().uuidString
                 let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ClipboardDrag-\(uniqueID)")
                 let tempURL = tempDir.appendingPathComponent(url.lastPathComponent)
-                
+
                 do {
                     try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
                     try FileManager.default.copyItem(at: url, to: tempURL)
-                    
+
                     // Cleanup temp sau 30s
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) {
                         try? FileManager.default.removeItem(at: tempDir)
                     }
-                    
+
                     return NSItemProvider(object: tempURL as NSURL)
                 } catch {
                     return NSItemProvider(object: url as NSURL)

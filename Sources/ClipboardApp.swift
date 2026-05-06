@@ -262,11 +262,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         let mouseLocation = NSEvent.mouseLocation
         let popoverSize = NSSize(width: 300, height: 450)
-        
-        let cursorY = mouseLocation.y
-        let displayBelow = cursorY > popoverSize.height + 20
-        let popoverOriginY = displayBelow ? cursorY : cursorY - popoverSize.height
-        let popoverOriginX = mouseLocation.x - 150
+
+        // Mặc định: cửa sổ nằm ngay bên dưới và bên phải con trỏ
+        // (NSWindow origin = góc bottom-left → top-left = cursor)
+        var popoverOriginX = mouseLocation.x
+        var popoverOriginY = mouseLocation.y - popoverSize.height
+
+        // Giới hạn trong màn hình chứa con trỏ (dùng visibleFrame để tránh đè menu bar / dock)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
+        if let visibleFrame = screen?.visibleFrame {
+            if popoverOriginX + popoverSize.width > visibleFrame.maxX {
+                popoverOriginX = visibleFrame.maxX - popoverSize.width
+            }
+            if popoverOriginX < visibleFrame.minX {
+                popoverOriginX = visibleFrame.minX
+            }
+            if popoverOriginY < visibleFrame.minY {
+                popoverOriginY = visibleFrame.minY
+            }
+            if popoverOriginY + popoverSize.height > visibleFrame.maxY {
+                popoverOriginY = visibleFrame.maxY - popoverSize.height
+            }
+        }
         
         // Tái sử dụng panel hoặc tạo mới
         let panel = virtualWindow ?? createPanel()
@@ -339,9 +356,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Paste nội dung
             item.paste()
             
-            // Move item lên đầu sau khi paste xong
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.clipboardManager.moveToTop(item)
+            // Move item lên đầu sau khi paste xong (nếu user bật)
+            if Settings.shared.moveToTopAfterPaste {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.clipboardManager.moveToTop(item)
+                }
             }
         }
     }

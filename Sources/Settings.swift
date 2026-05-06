@@ -74,6 +74,32 @@ class Settings: ObservableObject {
             applyTheme()
         }
     }
+
+    // MARK: - Feature toggles
+    @Published var moveToTopAfterPaste: Bool {
+        didSet { UserDefaults.standard.set(moveToTopAfterPaste, forKey: "feature_moveToTopAfterPaste") }
+    }
+    @Published var enableJSONToTable: Bool {
+        didSet { UserDefaults.standard.set(enableJSONToTable, forKey: "feature_enableJSONToTable") }
+    }
+    @Published var enableJSONToExcel: Bool {
+        didSet { UserDefaults.standard.set(enableJSONToExcel, forKey: "feature_enableJSONToExcel") }
+    }
+    @Published var enableTableToJSON: Bool {
+        didSet { UserDefaults.standard.set(enableTableToJSON, forKey: "feature_enableTableToJSON") }
+    }
+    @Published var enableOpenURLInBrowser: Bool {
+        didSet { UserDefaults.standard.set(enableOpenURLInBrowser, forKey: "feature_enableOpenURLInBrowser") }
+    }
+    @Published var enableTimestampConvert: Bool {
+        didSet { UserDefaults.standard.set(enableTimestampConvert, forKey: "feature_enableTimestampConvert") }
+    }
+    @Published var enableSearch: Bool {
+        didSet { UserDefaults.standard.set(enableSearch, forKey: "feature_enableSearch") }
+    }
+    @Published var enableDragAndDrop: Bool {
+        didSet { UserDefaults.standard.set(enableDragAndDrop, forKey: "feature_enableDragAndDrop") }
+    }
     
     func applyTheme() {
         switch themeMode {
@@ -118,6 +144,21 @@ class Settings: ObservableObject {
         } else {
             self.shortcutString = "⌃V" // Mặc định Control + V
         }
+
+        // Feature toggles — mặc định bật để giữ behavior cũ.
+        // Dùng object(forKey:) để phân biệt "chưa set" vs "đã set false".
+        func loadBool(_ key: String, default defaultValue: Bool) -> Bool {
+            if UserDefaults.standard.object(forKey: key) == nil { return defaultValue }
+            return UserDefaults.standard.bool(forKey: key)
+        }
+        self.moveToTopAfterPaste = loadBool("feature_moveToTopAfterPaste", default: true)
+        self.enableJSONToTable = loadBool("feature_enableJSONToTable", default: true)
+        self.enableJSONToExcel = loadBool("feature_enableJSONToExcel", default: true)
+        self.enableTableToJSON = loadBool("feature_enableTableToJSON", default: true)
+        self.enableOpenURLInBrowser = loadBool("feature_enableOpenURLInBrowser", default: true)
+        self.enableTimestampConvert = loadBool("feature_enableTimestampConvert", default: true)
+        self.enableSearch = loadBool("feature_enableSearch", default: true)
+        self.enableDragAndDrop = loadBool("feature_enableDragAndDrop", default: true)
     }
     
     func requestAccessibilityPermission() {

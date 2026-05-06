@@ -55,7 +55,19 @@ class Localization: ObservableObject {
         "update_checking": [.english: "Checking for updates...", .vietnamese: "Đang kiểm tra cập nhật..."],
         "update_downloading": [.english: "Downloading update...", .vietnamese: "Đang tải bản cập nhật..."],
         "update_version": [.english: "Version", .vietnamese: "Phiên bản"],
-        "update_auto_check": [.english: "Check for updates on launch", .vietnamese: "Tự động kiểm tra khi khởi động"]
+        "update_auto_check": [.english: "Check for updates on launch", .vietnamese: "Tự động kiểm tra khi khởi động"],
+        // Tabs
+        "tab_general": [.english: "General", .vietnamese: "Chung"],
+        "tab_features": [.english: "Features", .vietnamese: "Tính năng"],
+        // Feature toggles
+        "feature_move_to_top": [.english: "Move item to top after paste", .vietnamese: "Đưa mục lên đầu sau khi dán"],
+        "feature_json_to_table": [.english: "Convert JSON to table view", .vietnamese: "Chuyển JSON sang dạng bảng"],
+        "feature_json_to_excel": [.english: "Convert JSON to Excel (.xlsx)", .vietnamese: "Chuyển JSON sang Excel"],
+        "feature_table_to_json": [.english: "Convert table to JSON", .vietnamese: "Chuyển dạng bảng sang JSON"],
+        "feature_open_url": [.english: "Open URL in browser", .vietnamese: "Mở URL trong trình duyệt"],
+        "feature_timestamp": [.english: "Convert timestamp ↔ datetime", .vietnamese: "Chuyển đổi timestamp"],
+        "feature_search": [.english: "Search by keyword", .vietnamese: "Tìm kiếm theo từ khóa"],
+        "feature_drag_drop": [.english: "Drag-and-drop file", .vietnamese: "Kéo thả file"]
     ]
     
     init() {

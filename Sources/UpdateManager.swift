@@ -207,39 +207,34 @@ class UpdateManager: ObservableObject {
             }
             
             let currentAppPath = Bundle.main.bundlePath
-            
-            // Script thay thế nội dung app bundle, KHÔNG codesign
-            // macOS TCC dùng path để nhận dạng unsigned app → quyền Accessibility giữ nguyên
-            let currentContents = currentAppPath + "/Contents"
-            let newContents = appBundlePath.path + "/Contents"
-            
+
+            // Replace TOÀN BỘ .app bundle (không swap từng file con).
+            // Bundle mới đã được create_app.sh ad-hoc sign với entitlements →
+            // cùng BundleIdentifier (com.xuanhoa.clipboard) + cùng path →
+            // TCC giữ nguyên quyền Accessibility.
+            // Tuyệt đối KHÔNG xoá _CodeSignature: unsigned app TCC dùng CDHash,
+            // CDHash đổi mỗi build → mất quyền.
             let script = """
             #!/bin/bash
             sleep 1
-            
-            # Xóa code signature cũ (nếu có) để app thành unsigned
-            # macOS TCC dùng path cho unsigned app → giữ quyền Accessibility
-            rm -rf "\(currentContents)/_CodeSignature"
-            
-            # Thay binary
-            cp -f "\(newContents)/MacOS/Clipboard" "\(currentContents)/MacOS/Clipboard"
-            chmod +x "\(currentContents)/MacOS/Clipboard"
-            
-            # Thay Info.plist (cập nhật version)
-            cp -f "\(newContents)/Info.plist" "\(currentContents)/Info.plist"
-            
-            # Thay Resources
-            rm -rf "\(currentContents)/Resources"
-            cp -R "\(newContents)/Resources" "\(currentContents)/Resources"
-            
+
+            APP_PATH="\(currentAppPath)"
+            NEW_APP="\(appBundlePath.path)"
+            BACKUP="${APP_PATH}.old-$$"
+
+            # Atomic-ish replace: backup cũ, move mới vào, xoá backup
+            mv "$APP_PATH" "$BACKUP" || exit 1
+            mv "$NEW_APP" "$APP_PATH" || { mv "$BACKUP" "$APP_PATH"; exit 1; }
+            rm -rf "$BACKUP"
+
             # Xóa extended attributes để tránh Gatekeeper block
-            xattr -cr "\(currentAppPath)" 2>/dev/null
-            
-            # Dọn dẹp
+            xattr -cr "$APP_PATH" 2>/dev/null
+
+            # Dọn dẹp temp
             rm -rf "\(tempDir.path)"
-            
+
             # Mở lại app
-            open "\(currentAppPath)"
+            open "$APP_PATH"
             """
             
             let scriptPath = tempDir.appendingPathComponent("update.sh")
