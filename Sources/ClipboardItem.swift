@@ -87,22 +87,29 @@ struct ClipboardItem: Codable, Identifiable {
         self.cachedIsExcelData = false
     }
     
-    private static var appIconCache: [String: NSImage] = [:]
+    private static let appIconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 128
+        return cache
+    }()
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
         return f
     }()
-    
+
     var appIcon: NSImage? {
         guard let bundleId = appBundleIdentifier else { return nil }
-        if let cached = ClipboardItem.appIconCache[bundleId] {
+        let key = bundleId as NSString
+        if let cached = ClipboardItem.appIconCache.object(forKey: key) {
             return cached
         }
         if let path = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)?.path {
-            let icon = NSWorkspace.shared.icon(forFile: path)
+            // NSWorkspace có thể trả về instance dùng chung — copy trước khi mutate size
+            let raw = NSWorkspace.shared.icon(forFile: path)
+            let icon = (raw.copy() as? NSImage) ?? raw
             icon.size = NSSize(width: 16, height: 16)
-            ClipboardItem.appIconCache[bundleId] = icon
+            ClipboardItem.appIconCache.setObject(icon, forKey: key)
             return icon
         }
         return nil
@@ -201,35 +208,29 @@ struct ClipboardItem: Codable, Identifiable {
         }
     }
     
-    func copyOnly(displayText: String? = nil) {
-        // Yêu cầu ClipboardManager ignore change tiếp theo để tránh duplicate
-        ClipboardManager.shared.ignoreNextChange()
-        
-        // Copy nội dung vào clipboard
+    /// Ghi item ra NSPasteboard. Không tự ignoreNextChange — caller xử lý.
+    private func writePasteboardContent(displayText: String?) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        
+
         switch type {
         case .text:
             // Nếu có displayText khác (đã convert), dùng nó
             let textToCopy = displayText ?? text ?? ""
-            
+
             // Check if textToCopy is tab-separated data (converted from JSON)
             let isTSV = textToCopy.contains("\t") && textToCopy.contains("\n")
-            
-            // Set tất cả các format có sẵn để giữ nguyên format
+
+            // Giữ nguyên format gốc nếu user không convert
             if let htmlData = htmlData, displayText == nil {
                 pasteboard.setData(htmlData, forType: .html)
             }
             if let rtfData = rtfData, displayText == nil {
                 pasteboard.setData(rtfData, forType: .rtf)
             }
-            
-            // If it's TSV data, set the proper pasteboard type for Excel
             if isTSV, let tsvData = textToCopy.data(using: .utf8) {
                 pasteboard.setData(tsvData, forType: NSPasteboard.PasteboardType(rawValue: "public.utf8-tab-separated-values-text"))
             }
-            
             pasteboard.setString(textToCopy, forType: .string)
         case .image:
             if let imageData = imageData {
@@ -237,7 +238,6 @@ struct ClipboardItem: Codable, Identifiable {
             }
         case .file:
             if let urlString = fileURL {
-                // Parse URL đúng cách
                 let url: URL
                 if urlString.hasPrefix("file://") {
                     url = URL(fileURLWithPath: urlString.replacingOccurrences(of: "file://", with: ""))
@@ -248,71 +248,31 @@ struct ClipboardItem: Codable, Identifiable {
             }
         }
     }
-    
-    func paste(displayText: String? = nil) {
-        // Copy nội dung vào clipboard
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        
-        switch type {
-        case .text:
-            // Nếu có displayText khác (đã convert), dùng nó
-            let textToCopy = displayText ?? text ?? ""
-            
-            // Check if textToCopy is tab-separated data (converted from JSON)
-            let isTSV = textToCopy.contains("\t") && textToCopy.contains("\n")
-            
-            // Set tất cả các format có sẵn để giữ nguyên format
-            if let htmlData = htmlData, displayText == nil {
-                pasteboard.setData(htmlData, forType: .html)
-            }
-            if let rtfData = rtfData, displayText == nil {
-                pasteboard.setData(rtfData, forType: .rtf)
-            }
-            
-            // If it's TSV data, set the proper pasteboard type for Excel
-            if isTSV, let tsvData = textToCopy.data(using: .utf8) {
-                pasteboard.setData(tsvData, forType: NSPasteboard.PasteboardType(rawValue: "public.utf8-tab-separated-values-text"))
-            }
-            
-            pasteboard.setString(textToCopy, forType: .string)
-        case .image:
-            if let imageData = imageData {
-                pasteboard.setData(imageData, forType: .tiff)
-            }
-        case .file:
-            if let urlString = fileURL {
-                // Parse URL đúng cách
-                let url: URL
-                if urlString.hasPrefix("file://") {
-                    url = URL(fileURLWithPath: urlString.replacingOccurrences(of: "file://", with: ""))
-                } else {
-                    url = URL(fileURLWithPath: urlString)
-                }
-                pasteboard.writeObjects([url as NSURL])
-            }
-        }
-        
-        // Yêu cầu ClipboardManager ignore change tiếp theo để tránh duplicate
+
+    func copyOnly(displayText: String? = nil) {
         ClipboardManager.shared.ignoreNextChange()
-        
-        // Đợi một chút để clipboard được cập nhật
+        writePasteboardContent(displayText: displayText)
+    }
+
+    func paste(displayText: String? = nil) {
+        writePasteboardContent(displayText: displayText)
+        ClipboardManager.shared.ignoreNextChange()
+
+        // Đợi một chút để clipboard được cập nhật, rồi giả lập ⌘V
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            // Giả lập phím Command + V
-            if let source = CGEventSource(stateID: .hidSystemState) {
-                let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
-                let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
-                let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-                let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
-                
-                vDown?.flags = .maskCommand
-                vUp?.flags = .maskCommand
-                
-                cmdDown?.post(tap: .cghidEventTap)
-                vDown?.post(tap: .cghidEventTap)
-                vUp?.post(tap: .cghidEventTap)
-                cmdUp?.post(tap: .cghidEventTap)
-            }
+            guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+            let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
+            let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
+            let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+            let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
+
+            vDown?.flags = .maskCommand
+            vUp?.flags = .maskCommand
+
+            cmdDown?.post(tap: .cghidEventTap)
+            vDown?.post(tap: .cghidEventTap)
+            vUp?.post(tap: .cghidEventTap)
+            cmdUp?.post(tap: .cghidEventTap)
         }
     }
     

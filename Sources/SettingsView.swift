@@ -48,74 +48,123 @@ struct SettingsView: View {
     @ObservedObject private var updateManager = UpdateManager.shared
     @State private var maxHistoryText: String
     @State private var selectedLanguage: Language
-    @State private var selectedTheme: ThemeMode
     @State private var autoCheckForUpdates: Bool
     
+    @State private var useNativeUI: Bool
+    @State private var selectedTab: Int = 0
+
     init() {
         _maxHistoryText = State(initialValue: String(Settings.shared.maxHistoryItems))
         _selectedLanguage = State(initialValue: Localization.shared.currentLanguage)
-        _selectedTheme = State(initialValue: Settings.shared.themeMode)
         _autoCheckForUpdates = State(initialValue: Settings.shared.autoCheckForUpdates)
+        _useNativeUI = State(initialValue: Settings.shared.useNativeUI)
     }
     
     var body: some View {
-        TabView {
-            generalTab
-                .tabItem {
-                    Label(localization.localizedString("tab_general"), systemImage: "gearshape")
+        HStack(spacing: 0) {
+            // Sidebar
+            VStack(alignment: .leading, spacing: 2) {
+                sidebarItem(tag: 0, icon: "gearshape", titleKey: "tab_general")
+                sidebarItem(tag: 1, icon: "paintpalette", titleKey: "tab_appearance")
+                sidebarItem(tag: 2, icon: "switch.2", titleKey: "tab_features")
+                sidebarItem(tag: 3, icon: "info.circle", titleKey: "tab_info")
+                Spacer()
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 8)
+            .frame(width: 150)
+            .background(settings.themedSurface.opacity(0.4))
+
+            Divider()
+
+            // Content
+            Group {
+                switch selectedTab {
+                case 0: generalTab
+                case 1: appearanceTab
+                case 2: featuresTab
+                case 3: infoTab
+                default: generalTab
                 }
-            featuresTab
-                .tabItem {
-                    Label(localization.localizedString("tab_features"), systemImage: "switch.2")
-                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 400, height: 460)
+        .frame(width: 580, height: 500)
+        .background(settings.themedBackground)
+        .modifier(ConditionalThemeModifier(theme: settings.appTheme, active: settings.isCustomThemeActive))
         .onDisappear {
             shortcutViewModel.stopCaptureShortcut()
+        }
+    }
+
+    @ViewBuilder
+    private func sidebarItem(tag: Int, icon: String, titleKey: String) -> some View {
+        let isSelected = selectedTab == tag
+        Button {
+            selectedTab = tag
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .frame(width: 18)
+                Text(localization.localizedString(titleKey))
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? settings.themedAccent.opacity(0.2) : Color.clear)
+            )
+            .foregroundColor(isSelected ? settings.themedAccent : .primary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
     }
 
     private var generalTab: some View {
         ScrollView {
             VStack(spacing: 16) {
-                // Language & Appearance row
-                    HStack(spacing: 12) {
-                        settingsCard {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Label(localization.localizedString("language"), systemImage: "globe")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                                
-                                HStack(spacing: 6) {
-                                    languageButton(
-                                        flag: "🇻🇳",
-                                        label: "VI",
-                                        language: .vietnamese
-                                    )
-                                    languageButton(
-                                        flag: "🇺🇸",
-                                        label: "EN",
-                                        language: .english
-                                    )
-                                }
-                            }
-                        }
-                        
-                        settingsCard {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Label(localization.localizedString("appearance"), systemImage: "paintbrush")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                                
-                                HStack(spacing: 6) {
-                                    themeButton(icon: "desktopcomputer", mode: .system)
-                                    themeButton(icon: "sun.max.fill", mode: .light)
-                                    themeButton(icon: "moon.fill", mode: .dark)
-                                }
+                    // Language
+                    settingsCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(localization.localizedString("language"), systemImage: "globe")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+
+                            HStack(spacing: 6) {
+                                languageButton(flag: "🇻🇳", label: "VI", language: .vietnamese)
+                                languageButton(flag: "🇺🇸", label: "EN", language: .english)
                             }
                         }
                     }
-                    
+
+                    // Launch at login
+                    settingsCard {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(localization.localizedString("launch_at_login"), systemImage: "power")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                Text(localization.localizedString("launch_at_login_hint"))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary.opacity(0.8))
+                            }
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { settings.launchAtLogin },
+                                set: { settings.launchAtLogin = $0 }
+                            ))
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                        }
+                    }
+
                     // Shortcut
                     settingsCard {
                         HStack {
@@ -137,11 +186,11 @@ struct SettingsView: View {
                                     .padding(.vertical, 5)
                                     .background(
                                         RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.accentColor.opacity(0.1))
+                                            .fill(settings.themedAccent.opacity(0.1))
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 6)
-                                            .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                                            .stroke(settings.themedAccent.opacity(0.3), lineWidth: 1)
                                     )
                             }
                             .buttonStyle(.plain)
@@ -166,8 +215,9 @@ struct SettingsView: View {
                                     .multilineTextAlignment(.center)
                                     .frame(width: 50)
                                     .textFieldStyle(.roundedBorder)
+                                    .help(localization.localizedString("max_history_hint"))
                                     .onSubmit {
-                                        if let value = Int(maxHistoryText), value > 0 {
+                                        if let value = Int(maxHistoryText), value >= 1 && value <= 500 {
                                             settings.maxHistoryItems = value
                                         } else {
                                             maxHistoryText = String(settings.maxHistoryItems)
@@ -215,6 +265,13 @@ struct SettingsView: View {
                                 } else if updateManager.isDownloading {
                                     ProgressView(value: updateManager.downloadProgress)
                                         .frame(width: 80)
+                                    Button(action: { updateManager.cancelDownload() }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.red)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(localization.localizedString("update_cancel"))
                                 } else {
                                     Button(action: { updateManager.checkForUpdates() }) {
                                         Image(systemName: "arrow.clockwise")
@@ -251,9 +308,268 @@ struct SettingsView: View {
         }
     }
 
+    private var appearanceTab: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Theme picker — bao gồm System/Light/Dark + các theme nổi tiếng
+                settingsCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label(localization.localizedString("color_theme"), systemImage: "paintpalette")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(settings.appTheme.displayName)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary.opacity(0.8))
+                        }
+                        Text(localization.localizedString("color_theme_hint"))
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary.opacity(0.7))
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 6) {
+                            ForEach(AppTheme.allCases, id: \.self) { theme in
+                                themeSwatch(theme: theme)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+
+                // Font design
+                settingsCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(localization.localizedString("font_design"), systemImage: "textformat")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary)
+
+                        HStack(spacing: 6) {
+                            ForEach(AppFontDesign.allCases, id: \.self) { design in
+                                fontDesignButton(design: design)
+                            }
+                        }
+                    }
+                }
+
+                // Font size
+                settingsCard {
+                    HStack {
+                        Label(localization.localizedString("font_size"), systemImage: "textformat.size")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 6) {
+                            Text(settings.appFontDesign == .system ? "Aa" : "Aa")
+                                .font(.system(
+                                    size: CGFloat(settings.appFontSize),
+                                    design: settings.appFontDesign.swiftUIDesign
+                                ))
+                                .foregroundColor(.secondary)
+                            Stepper(value: Binding(
+                                get: { settings.appFontSize },
+                                set: { settings.appFontSize = $0 }
+                            ), in: 10...16, step: 1) {
+                                Text("\(settings.appFontSize)pt")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .frame(minWidth: 36, alignment: .trailing)
+                            }
+                        }
+                    }
+                }
+
+                // Native UI toggle
+                settingsCard {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label(localization.localizedString("use_native_ui"), systemImage: "rectangle.3.offgrid")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Text(localization.localizedString("use_native_ui_hint"))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary.opacity(0.8))
+                        }
+                        Spacer()
+                        Toggle("", isOn: $useNativeUI)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                            .onChange(of: useNativeUI) { newValue in
+                                settings.useNativeUI = newValue
+                            }
+                    }
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private func fontDesignButton(design: AppFontDesign) -> some View {
+        let isSelected = settings.appFontDesign == design
+        return Button(action: { settings.appFontDesign = design }) {
+            VStack(spacing: 2) {
+                Text("Aa")
+                    .font(.system(size: 14, weight: .medium, design: design.swiftUIDesign))
+                Text(localization.localizedString(design.localizationKey))
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? settings.themedAccent.opacity(0.15) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isSelected ? settings.themedAccent : Color(NSColor.separatorColor),
+                            lineWidth: isSelected ? 1.5 : 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var infoTab: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Author
+                settingsCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(localization.localizedString("info_author"), systemImage: "person.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(settings.themedAccent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Nguyễn Xuân Hoà")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("v\(updateManager.currentVersion)")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                // Links
+                settingsCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(localization.localizedString("info_links"), systemImage: "link")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary)
+
+                        infoLinkRow(
+                            icon: "chevron.left.forwardslash.chevron.right",
+                            label: localization.localizedString("info_github"),
+                            url: "https://github.com/nguyenxuanhoa493/Windows-plus-V-for-Mac"
+                        )
+                        infoLinkRow(
+                            icon: "f.circle.fill",
+                            label: "Facebook: @xuanhoa493",
+                            url: "https://www.facebook.com/xuanhoa493/"
+                        )
+                        infoLinkRow(
+                            icon: "paperplane.fill",
+                            label: "Telegram: @xuanhoa493",
+                            url: "https://t.me/xuanhoa493"
+                        )
+                    }
+                }
+
+                // Buy me a coffee — QR Techcombank
+                settingsCard {
+                    VStack(alignment: .center, spacing: 10) {
+                        HStack {
+                            Label(localization.localizedString("info_support"), systemImage: "heart.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        Text(localization.localizedString("info_buy_coffee_text"))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let img = SettingsView.loadResourceImage(named: "cafe", ext: "jpg") {
+                            Image(nsImage: img)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 260, maxHeight: 320)
+                                .cornerRadius(8)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    /// Load resource từ cả 2 bundle: SwiftPM module bundle (dev build) + main app bundle (release Clipboard.app).
+    static func loadResourceImage(named name: String, ext: String) -> NSImage? {
+        if let url = Bundle.module.url(forResource: name, withExtension: ext),
+           let img = NSImage(contentsOf: url) {
+            return img
+        }
+        if let path = Bundle.main.path(forResource: name, ofType: ext),
+           let img = NSImage(contentsOfFile: path) {
+            return img
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func infoLinkRow(icon: String, label: String, url: String) -> some View {
+        Button {
+            if let u = URL(string: url) { NSWorkspace.shared.open(u) }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .frame(width: 18)
+                    .foregroundColor(settings.themedAccent)
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundColor(.primary)
+                Spacer()
+                Image(systemName: "arrow.up.forward.square")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+    }
+
     private var featuresTab: some View {
         ScrollView {
             VStack(spacing: 8) {
+                // Privacy disclaimer (plaintext storage)
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 14))
+                    Text(localization.localizedString("feature_privacy_disclaimer"))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 0.5)
+                )
+
                 featureToggleRow(
                     icon: "arrow.up.to.line",
                     titleKey: "feature_move_to_top",
@@ -318,6 +634,22 @@ struct SettingsView: View {
                         set: { settings.enableDragAndDrop = $0 }
                     )
                 )
+                featureToggleRow(
+                    icon: "number.square",
+                    titleKey: "feature_number_shortcuts",
+                    isOn: Binding(
+                        get: { settings.enableNumberShortcuts },
+                        set: { settings.enableNumberShortcuts = $0 }
+                    )
+                )
+                featureToggleRow(
+                    icon: "rectangle.portrait.and.arrow.right",
+                    titleKey: "feature_hide_popup_after_drag",
+                    isOn: Binding(
+                        get: { settings.hidePopupAfterDrag },
+                        set: { settings.hidePopupAfterDrag = $0 }
+                    )
+                )
             }
             .padding(16)
         }
@@ -347,7 +679,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(NSColor.controlBackgroundColor))
+                    .fill(settings.themedSurface)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -371,33 +703,46 @@ struct SettingsView: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selectedLanguage == language ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .fill(selectedLanguage == language ? settings.themedAccent.opacity(0.15) : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(selectedLanguage == language ? Color.accentColor : Color(NSColor.separatorColor), lineWidth: selectedLanguage == language ? 1.5 : 0.5)
+                    .stroke(selectedLanguage == language ? settings.themedAccent : Color(NSColor.separatorColor), lineWidth: selectedLanguage == language ? 1.5 : 0.5)
             )
         }
         .buttonStyle(.plain)
     }
     
-    private func themeButton(icon: String, mode: ThemeMode) -> some View {
-        Button(action: {
-            selectedTheme = mode
-            settings.themeMode = mode
-        }) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .frame(width: 28, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(selectedTheme == mode ? Color.accentColor.opacity(0.15) : Color.clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(selectedTheme == mode ? Color.accentColor : Color(NSColor.separatorColor), lineWidth: selectedTheme == mode ? 1.5 : 0.5)
-                )
+    private func themeSwatch(theme: AppTheme) -> some View {
+        let isSelected = settings.appTheme == theme
+        return Button(action: { settings.appTheme = theme }) {
+            ZStack {
+                Circle()
+                    .fill(theme.swatchColor)
+                    .frame(width: 28, height: 28)
+                if theme == .system {
+                    // System theme = pattern conic gradient để nhận biết
+                    Circle()
+                        .fill(AngularGradient(
+                            gradient: Gradient(colors: [.red, .orange, .yellow, .green, .blue, .purple, .red]),
+                            center: .center
+                        ))
+                        .frame(width: 28, height: 28)
+                }
+                if isSelected {
+                    Circle()
+                        .stroke(Color.primary, lineWidth: 2)
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.4), radius: 1)
+                }
+            }
+            .frame(width: 36, height: 36)
         }
         .buttonStyle(.plain)
+        .help(theme.displayName)
     }
+
 }

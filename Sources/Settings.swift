@@ -1,22 +1,43 @@
 import Foundation
 import SwiftUI
+import ServiceManagement
 
 enum ThemeMode: String, CaseIterable {
     case system = "system"
     case light = "light"
     case dark = "dark"
-    
-    var displayName: String {
+    case custom = "custom"
+}
+
+enum AppFontDesign: String, CaseIterable {
+    case system, monospaced, rounded, serif
+
+    var swiftUIDesign: Font.Design {
         switch self {
-        case .system: return "Hệ thống"
-        case .light: return "Sáng"
-        case .dark: return "Tối"
+        case .system: return .default
+        case .monospaced: return .monospaced
+        case .rounded: return .rounded
+        case .serif: return .serif
+        }
+    }
+
+    var localizationKey: String {
+        switch self {
+        case .system: return "font_design_system"
+        case .monospaced: return "font_design_monospaced"
+        case .rounded: return "font_design_rounded"
+        case .serif: return "font_design_serif"
         }
     }
 }
 
 extension Notification.Name {
     static let shortcutChanged = Notification.Name("shortcutChanged")
+    /// Posted sau khi Settings window đã hiển thị. `object` = NSWindow.
+    /// AppDelegate dùng để mở popup chính ở chế độ anchored bên cạnh Settings.
+    static let settingsWindowDidShow = Notification.Name("settingsWindowDidShow")
+    /// Posted sau khi Settings.applyTheme() chạy — windows tự cập nhật backgroundColor titlebar.
+    static let themeDidChange = Notification.Name("themeDidChange")
 }
 
 class Settings: ObservableObject {
@@ -37,13 +58,13 @@ class Settings: ObservableObject {
     @Published var shortcutKey: String {
         didSet {
             UserDefaults.standard.set(shortcutKey, forKey: "shortcutKey")
-            // Cập nhật shortcutString khi shortcutKey thay đổi
+            // Cập nhật shortcutString khi shortcutKey thay đổi.
+            // Lưu ý: didSet của shortcutString sẽ tự ghi UserDefaults — không cần ghi 2 lần ở đây.
             shortcutString = shortcutKey
-            // Thông báo để AppDelegate cập nhật phím tắt
             NotificationCenter.default.post(name: .shortcutChanged, object: nil)
         }
     }
-    
+
     @Published var shortcutString: String? {
         didSet {
             UserDefaults.standard.set(shortcutString, forKey: "shortcutString")
@@ -67,11 +88,68 @@ class Settings: ObservableObject {
             UserDefaults.standard.set(autoCheckForUpdates, forKey: "autoCheckForUpdates")
         }
     }
+
+    /// Tự khởi động cùng macOS — dùng SMAppService (macOS 13+).
+    /// Trên macOS 12, toggle vẫn lưu UserDefaults nhưng không có hiệu lực thực sự.
+    @Published var launchAtLogin: Bool {
+        didSet {
+            UserDefaults.standard.set(launchAtLogin, forKey: "launchAtLogin")
+            applyLaunchAtLogin()
+        }
+    }
+
+    private func applyLaunchAtLogin() {
+        if #available(macOS 13.0, *) {
+            do {
+                if launchAtLogin {
+                    if SMAppService.mainApp.status != .enabled {
+                        try SMAppService.mainApp.register()
+                    }
+                } else {
+                    if SMAppService.mainApp.status != .notRegistered {
+                        try SMAppService.mainApp.unregister()
+                    }
+                }
+            } catch {
+                print("DEBUG: applyLaunchAtLogin lỗi: \(error)")
+            }
+        }
+    }
     
     @Published var themeMode: ThemeMode {
         didSet {
             UserDefaults.standard.set(themeMode.rawValue, forKey: "themeMode")
             applyTheme()
+        }
+    }
+
+    /// `true` → popup dùng style "native macOS list" (gọn, không card, dùng system selection color).
+    /// `false` (default) → custom card UI với hover effect, action buttons.
+    @Published var useNativeUI: Bool {
+        didSet {
+            UserDefaults.standard.set(useNativeUI, forKey: "useNativeUI")
+        }
+    }
+
+    /// Bộ màu — System theme dùng accent + appearance hệ thống; các theme khác override appearance + accent + background.
+    @Published var appTheme: AppTheme {
+        didSet {
+            UserDefaults.standard.set(appTheme.rawValue, forKey: "appTheme")
+            applyTheme()
+        }
+    }
+
+    /// Phông chữ cho text content trong popup item (system/monospaced/rounded/serif).
+    @Published var appFontDesign: AppFontDesign {
+        didSet {
+            UserDefaults.standard.set(appFontDesign.rawValue, forKey: "appFontDesign")
+        }
+    }
+
+    /// Cỡ chữ cho text content trong popup item (10-16, default 11).
+    @Published var appFontSize: Int {
+        didSet {
+            UserDefaults.standard.set(appFontSize, forKey: "appFontSize")
         }
     }
 
@@ -100,16 +178,53 @@ class Settings: ObservableObject {
     @Published var enableDragAndDrop: Bool {
         didSet { UserDefaults.standard.set(enableDragAndDrop, forKey: "feature_enableDragAndDrop") }
     }
+    @Published var enableNumberShortcuts: Bool {
+        didSet { UserDefaults.standard.set(enableNumberShortcuts, forKey: "feature_enableNumberShortcuts") }
+    }
+    @Published var hidePopupAfterDrag: Bool {
+        didSet { UserDefaults.standard.set(hidePopupAfterDrag, forKey: "feature_hidePopupAfterDrag") }
+    }
     
     func applyTheme() {
-        switch themeMode {
-        case .system:
+        // Áp dụng appearance theo appTheme (nil = system, .aqua/.darkAqua = ép cứng)
+        if let preferred = appTheme.preferredAppearance {
+            NSApp.appearance = NSAppearance(named: preferred)
+        } else {
             NSApp.appearance = nil
-        case .light:
-            NSApp.appearance = NSAppearance(named: .aqua)
-        case .dark:
-            NSApp.appearance = NSAppearance(named: .darkAqua)
         }
+        // Báo các NSWindow tự cập nhật backgroundColor (titlebar)
+        NotificationCenter.default.post(name: .themeDidChange, object: nil)
+    }
+
+    /// `true` khi appTheme có signature colors (Dracula, Nord, ...) — áp dụng background/surface/foreground/accent overrides.
+    /// `false` cho System/Light/Dark — chỉ ép appearance, dùng system colors.
+    var isCustomThemeActive: Bool {
+        switch appTheme {
+        case .system, .light, .dark: return false
+        default: return true
+        }
+    }
+
+    // MARK: - Theme-aware color helpers (fallback về system colors khi không custom)
+
+    var themedBackground: Color {
+        if isCustomThemeActive, let bg = appTheme.background { return bg }
+        return Color(.windowBackgroundColor)
+    }
+
+    var themedSurface: Color {
+        if isCustomThemeActive, let surface = appTheme.surface { return surface }
+        return Color(.controlBackgroundColor)
+    }
+
+    var themedForeground: Color {
+        if isCustomThemeActive, let fg = appTheme.foreground { return fg }
+        return .primary
+    }
+
+    var themedAccent: Color {
+        if isCustomThemeActive, let accent = appTheme.accent { return accent }
+        return .accentColor
     }
     
     init() {
@@ -124,6 +239,14 @@ class Settings: ObservableObject {
         } else {
             self.autoCheckForUpdates = UserDefaults.standard.bool(forKey: "autoCheckForUpdates")
         }
+
+        // Launch at login — đồng bộ với SMAppService nếu có thể (macOS 13+)
+        if #available(macOS 13.0, *) {
+            let registered = SMAppService.mainApp.status == .enabled
+            self.launchAtLogin = registered
+        } else {
+            self.launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
+        }
         
         // Khởi tạo maxHistoryItems với giá trị mặc định
         let savedMaxHistoryItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
@@ -136,6 +259,39 @@ class Settings: ObservableObject {
         } else {
             self.themeMode = .system
         }
+
+        // Native UI toggle (default: false → custom card UI)
+        if UserDefaults.standard.object(forKey: "useNativeUI") == nil {
+            self.useNativeUI = false
+        } else {
+            self.useNativeUI = UserDefaults.standard.bool(forKey: "useNativeUI")
+        }
+
+        // App theme — ưu tiên đọc appTheme đã lưu; nếu chưa có thì migrate từ legacy themeMode
+        if let savedTheme = UserDefaults.standard.string(forKey: "appTheme"),
+           let theme = AppTheme(rawValue: savedTheme) {
+            self.appTheme = theme
+        } else if let legacyMode = UserDefaults.standard.string(forKey: "themeMode") {
+            switch legacyMode {
+            case "light": self.appTheme = .light
+            case "dark": self.appTheme = .dark
+            default: self.appTheme = .system  // "system" + "custom"
+            }
+        } else {
+            self.appTheme = .system
+        }
+
+        // Font design (default: system)
+        if let savedFont = UserDefaults.standard.string(forKey: "appFontDesign"),
+           let design = AppFontDesign(rawValue: savedFont) {
+            self.appFontDesign = design
+        } else {
+            self.appFontDesign = .system
+        }
+
+        // Font size (default: 13, range 10-16)
+        let savedSize = UserDefaults.standard.integer(forKey: "appFontSize")
+        self.appFontSize = (10...16).contains(savedSize) ? savedSize : 13
         
         // Khởi tạo shortcutKey và shortcutString
         self.shortcutKey = UserDefaults.standard.string(forKey: "shortcutKey") ?? "⌘V"
@@ -159,6 +315,8 @@ class Settings: ObservableObject {
         self.enableTimestampConvert = loadBool("feature_enableTimestampConvert", default: true)
         self.enableSearch = loadBool("feature_enableSearch", default: true)
         self.enableDragAndDrop = loadBool("feature_enableDragAndDrop", default: true)
+        self.enableNumberShortcuts = loadBool("feature_enableNumberShortcuts", default: true)
+        self.hidePopupAfterDrag = loadBool("feature_hidePopupAfterDrag", default: true)
     }
     
     func requestAccessibilityPermission() {

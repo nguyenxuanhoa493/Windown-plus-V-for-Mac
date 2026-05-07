@@ -1,4 +1,5 @@
 import Cocoa
+import CryptoKit
 
 class ClipboardManager {
     static let shared = ClipboardManager()
@@ -10,11 +11,18 @@ class ClipboardManager {
     private var maxHistoryItems: Int { Settings.shared.maxHistoryItems }
     private var isIgnoringChanges = false
     
-    private lazy var imageCacheDirectory: URL = {
-        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("ClipboardImages")
+    // URL bất biến → thread-safe khi đọc từ background queue (loadImageFromDisk).
+    // Khởi tạo trong init() trước khi expose self ra Timer/background.
+    private let imageCacheDirectory: URL = {
+        let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let cacheDir = baseURL.appendingPathComponent("ClipboardImages")
         if !FileManager.default.fileExists(atPath: cacheDir.path) {
-            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+        } else {
+            // Đảm bảo permission không bị nới lỏng (file ảnh có thể chứa dữ liệu nhạy cảm)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDir.path)
         }
         return cacheDir
     }()
@@ -22,6 +30,34 @@ class ClipboardManager {
     private init() {
         loadHistory()
         startMonitoring()
+        // Dọn ảnh mồ côi sau 2s khi launch — không chặn UI, không race với khởi tạo.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.cleanupOrphanedImages()
+        }
+    }
+
+    /// MUST be called on main thread (đọc history). Tự dispatch I/O ra background.
+    private func cleanupOrphanedImages() {
+        assert(Thread.isMainThread, "cleanupOrphanedImages phải chạy trên main thread để đọc history an toàn")
+        // Snapshot trên main
+        let referencedNames = Set(history.compactMap { $0.imageFileName })
+        let cacheDir = imageCacheDirectory
+        // Disk I/O ra background
+        DispatchQueue.global(qos: .utility).async {
+            guard let files = try? FileManager.default.contentsOfDirectory(atPath: cacheDir.path) else {
+                return
+            }
+            var removed = 0
+            for fileName in files where !referencedNames.contains(fileName) {
+                let url = cacheDir.appendingPathComponent(fileName)
+                if (try? FileManager.default.removeItem(at: url)) != nil {
+                    removed += 1
+                }
+            }
+            if removed > 0 {
+                print("DEBUG: Đã dọn \(removed) ảnh mồ côi trong cache")
+            }
+        }
     }
     
     func startMonitoring() {
@@ -83,9 +119,15 @@ class ClipboardManager {
         }
     }
     
+    /// Lưu ảnh ra disk dùng SHA256 làm filename → 2 lần copy cùng ảnh sẽ reuse cùng 1 file.
     func saveImageToDisk(_ imageData: Data) -> String? {
-        let fileName = UUID().uuidString + ".tiff"
+        let hash = SHA256.hash(data: imageData).map { String(format: "%02x", $0) }.joined()
+        let fileName = hash + ".tiff"
         let fileURL = imageCacheDirectory.appendingPathComponent(fileName)
+        // Đã có file (cùng nội dung) — không cần ghi lại
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            return fileName
+        }
         do {
             try imageData.write(to: fileURL)
             return fileName
@@ -94,14 +136,19 @@ class ClipboardManager {
             return nil
         }
     }
-    
+
     func loadImageFromDisk(_ fileName: String) -> Data? {
         let fileURL = imageCacheDirectory.appendingPathComponent(fileName)
         return try? Data(contentsOf: fileURL)
     }
-    
+
+    /// Xoá ảnh nếu KHÔNG còn item nào khác trong history reference cùng fileName.
+    /// Tránh xoá nhầm file đang được nhiều item dùng chung (sau khi dedup theo hash).
     func deleteImageFromDisk(_ fileName: String?) {
         guard let fileName = fileName else { return }
+        // Có thể được gọi giữa lúc đang remove item — kiểm tra trên history mới nhất
+        let stillReferenced = history.contains { $0.imageFileName == fileName }
+        if stillReferenced { return }
         let fileURL = imageCacheDirectory.appendingPathComponent(fileName)
         try? FileManager.default.removeItem(at: fileURL)
     }
@@ -123,10 +170,12 @@ class ClipboardManager {
                     break
                 }
             }
-            
+
             guard let idx = oldestIndex else { break }
-            deleteImageFromDisk(history[idx].imageFileName)
+            // Capture fileName trước, remove khỏi history, rồi delete (refcount check trong delete)
+            let fileName = history[idx].imageFileName
             history.remove(at: idx)
+            deleteImageFromDisk(fileName)
         }
     }
     
@@ -140,9 +189,10 @@ class ClipboardManager {
         if let existingIndex = history.firstIndex(where: { $0.text == text }) {
             let existing = history[existingIndex]
             if !existing.isPinned {
-                deleteImageFromDisk(existing.imageFileName)
+                let oldFileName = existing.imageFileName
                 history.remove(at: existingIndex)
                 history.insert(newItem, at: 0)
+                deleteImageFromDisk(oldFileName)
                 removeOldestNonBookmarkedIfNeeded()
                 saveHistory()
             }
@@ -198,9 +248,20 @@ class ClipboardManager {
     }
     
     private func loadHistory() {
-        if let data = UserDefaults.standard.data(forKey: "clipboardHistory"),
-           let decoded = try? JSONDecoder().decode([ClipboardItem].self, from: data) {
-            history = decoded
+        guard let data = UserDefaults.standard.data(forKey: "clipboardHistory") else {
+            return
+        }
+        do {
+            history = try JSONDecoder().decode([ClipboardItem].self, from: data)
+        } catch {
+            // JSON corrupt — backup data trước khi reset để có thể recover thủ công
+            print("DEBUG: clipboardHistory JSON bị hỏng (\(error)), backup và reset")
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let backupURL = imageCacheDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("clipboardHistory.corrupt-\(timestamp).json")
+            try? data.write(to: backupURL)
+            UserDefaults.standard.removeObject(forKey: "clipboardHistory")
         }
     }
     
@@ -245,17 +306,25 @@ class ClipboardManager {
     
     func removeItem(_ item: ClipboardItem) {
         if let index = history.firstIndex(where: { $0.id == item.id }) {
-            deleteImageFromDisk(history[index].imageFileName)
+            let fileName = history[index].imageFileName
             history.remove(at: index)
+            deleteImageFromDisk(fileName)
             saveHistory()
         }
     }
-    
-    func clearHistory() {
-        for item in history where !item.isBookmarked && !item.isPinned {
-            deleteImageFromDisk(item.imageFileName)
+
+    func clearHistory(includePinned: Bool = false, includeBookmarked: Bool = false) {
+        let predicate: (ClipboardItem) -> Bool = { item in
+            if !includePinned && item.isPinned { return false }
+            if !includeBookmarked && item.isBookmarked { return false }
+            return true
         }
-        history.removeAll(where: { !$0.isBookmarked && !$0.isPinned })
+        // Capture filenames trước khi remove khỏi history (để refcount check sau)
+        let removedFileNames = history.filter(predicate).compactMap { $0.imageFileName }
+        history.removeAll(where: predicate)
+        for fileName in Set(removedFileNames) {
+            deleteImageFromDisk(fileName)
+        }
         saveHistory()
     }
     
@@ -267,10 +336,13 @@ class ClipboardManager {
     }
     
     func clearByType(_ type: ClipboardItemType) {
-        for item in history where item.type == type && !item.isBookmarked && !item.isPinned {
-            deleteImageFromDisk(item.imageFileName)
-        }
+        let removedFileNames = history
+            .filter { $0.type == type && !$0.isBookmarked && !$0.isPinned }
+            .compactMap { $0.imageFileName }
         history.removeAll(where: { $0.type == type && !$0.isBookmarked && !$0.isPinned })
+        for fileName in Set(removedFileNames) {
+            deleteImageFromDisk(fileName)
+        }
         saveHistory()
     }
     

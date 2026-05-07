@@ -66,6 +66,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Đăng ký lắng nghe sự kiện thay đổi ngôn ngữ và phím tắt
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: .languageChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(shortcutChanged), name: .shortcutChanged, object: nil)
+
+        // Re-check Accessibility khi user mở lại app (sau khi grant/revoke từ System Settings)
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive),
+            name: NSApplication.didBecomeActiveNotification, object: nil)
+
+        // Settings đã mở → mở popup chính ở chế độ anchored bên cạnh để xem live preview
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsWindowDidShow(_:)),
+            name: .settingsWindowDidShow, object: nil)
+
+        // Theme đổi → cập nhật backgroundColor (titlebar) cho popup nếu đang mở
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange),
+            name: .themeDidChange, object: nil)
         
         // Tự động kiểm tra cập nhật (silent)
         if Settings.shared.autoCheckForUpdates {
@@ -107,21 +119,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let settingsItem = NSMenuItem(title: Localization.shared.localizedString("settings"), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
-        
+
         menu.addItem(NSMenuItem.separator())
-        
-        let buyMeACoffeeItem = NSMenuItem(title: Localization.shared.localizedString("buy_coffee"), action: #selector(showBuyMeACoffee), keyEquivalent: "")
-        buyMeACoffeeItem.target = self
-        menu.addItem(buyMeACoffeeItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        let contactItem = NSMenuItem(title: Localization.shared.localizedString("contact"), action: #selector(showContact), keyEquivalent: "")
-        contactItem.target = self
-        menu.addItem(contactItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
+
         let updateItem = NSMenuItem(title: Localization.shared.localizedString("check_for_updates"), action: #selector(checkForUpdates), keyEquivalent: "u")
         updateItem.target = self
         menu.addItem(updateItem)
@@ -137,9 +137,129 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func languageChanged() {
         setupMenu() // Cập nhật lại menu khi ngôn ngữ thay đổi
     }
-    
+
     @objc private func shortcutChanged() {
         setupHotKey() // Cập nhật lại phím tắt khi có thay đổi
+    }
+
+    @objc private func themeDidChange() {
+        virtualWindow?.backgroundColor = NSColor(Settings.shared.themedBackground)
+    }
+
+    @objc private func settingsWindowDidShow(_ note: Notification) {
+        guard let settingsWindow = note.object as? NSWindow else { return }
+        showAnchoredPopup(near: settingsWindow)
+    }
+
+    private var anchorObservers: [NSObjectProtocol] = []
+    private let popoverSize = NSSize(width: 300, height: 450)
+
+    /// Mở popup chính bên phải Settings window — không dismiss khi click outside,
+    /// dùng làm live preview khi user chỉnh theme/font.
+    func showAnchoredPopup(near anchor: NSWindow) {
+        // Đóng popup hiện tại (nếu đang mở từ hotkey) + cleanup monitor cũ
+        if let window = virtualWindow, window.isVisible {
+            window.close()
+        }
+        removeEventMonitor()
+
+        let panel = virtualWindow ?? createPanel()
+        virtualWindow = panel
+
+        // Anchored mode: lower level để Settings có thể front-most khi user click
+        panel.level = .floating
+        panel.backgroundColor = NSColor(Settings.shared.themedBackground)
+
+        let origin = positionRight(of: anchor, panelSize: popoverSize)
+        panel.setFrame(NSRect(origin: origin, size: popoverSize), display: false)
+
+        applyPanelContent(to: panel)
+        panel.orderFront(nil)
+
+        // KHÔNG add global click monitor — popup giữ vị trí khi user click sang Settings
+        setupAnchorObservers(for: anchor)
+    }
+
+    private func positionRight(of anchor: NSWindow, panelSize: NSSize) -> NSPoint {
+        let frame = anchor.frame
+        let gap: CGFloat = 12
+        // Align tops: popup.maxY = anchor.maxY → top 2 cửa sổ thẳng hàng
+        var origin = NSPoint(x: frame.maxX + gap, y: frame.maxY - panelSize.height)
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
+            // Hết chỗ bên phải → flip sang trái
+            if origin.x + panelSize.width > visible.maxX {
+                origin.x = frame.minX - gap - panelSize.width
+            }
+            if origin.x < visible.minX { origin.x = visible.minX }
+            if origin.y < visible.minY { origin.y = visible.minY }
+            if origin.y + panelSize.height > visible.maxY {
+                origin.y = visible.maxY - panelSize.height
+            }
+        }
+        return origin
+    }
+
+    private func setupAnchorObservers(for anchor: NSWindow) {
+        tearDownAnchorObservers()
+        let nc = NotificationCenter.default
+        anchorObservers.append(nc.addObserver(
+            forName: NSWindow.willCloseNotification, object: anchor, queue: .main
+        ) { [weak self] _ in
+            self?.virtualWindow?.close()
+            self?.tearDownAnchorObservers()
+        })
+        let reposition: (Notification) -> Void = { [weak self, weak anchor] _ in
+            guard let self = self, let anchor = anchor, let panel = self.virtualWindow else { return }
+            let origin = self.positionRight(of: anchor, panelSize: self.popoverSize)
+            panel.setFrame(NSRect(origin: origin, size: self.popoverSize), display: true)
+        }
+        anchorObservers.append(nc.addObserver(
+            forName: NSWindow.didMoveNotification, object: anchor, queue: .main, using: reposition
+        ))
+        anchorObservers.append(nc.addObserver(
+            forName: NSWindow.didResizeNotification, object: anchor, queue: .main, using: reposition
+        ))
+    }
+
+    private func tearDownAnchorObservers() {
+        anchorObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        anchorObservers.removeAll()
+    }
+
+    /// Build ClipboardHistoryView + set vào panel.contentView. Tái dùng cho cả cursor mode + anchored mode.
+    private func applyPanelContent(to panel: NSPanel) {
+        let items = clipboardManager.getHistory() ?? []
+        let view = ClipboardHistoryView(items: items, onItemSelected: { [weak self, weak panel] item in
+            self?.handleItemSelected(item)
+            panel?.close()
+        }, onClearAll: { [weak self, weak panel] includePinned, includeBookmarked in
+            self?.clipboardManager.clearHistory(includePinned: includePinned, includeBookmarked: includeBookmarked)
+            if let panel = panel { self?.applyPanelContent(to: panel) }
+        }, onCopyOnly: { [weak panel] _ in
+            panel?.close()
+        }, onTogglePin: { [weak self, weak panel] item in
+            self?.clipboardManager.togglePin(item)
+            if let panel = panel { self?.applyPanelContent(to: panel) }
+        }, onDeleteItem: { [weak self, weak panel] item in
+            self?.clipboardManager.removeItem(item)
+            if let panel = panel { self?.applyPanelContent(to: panel) }
+        }, onToggleBookmark: { [weak self, weak panel] item in
+            self?.clipboardManager.toggleBookmark(item)
+            if let panel = panel { self?.applyPanelContent(to: panel) }
+        })
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = NSRect(origin: .zero, size: popoverSize)
+        panel.contentView = hostingView
+    }
+
+    @objc private func appDidBecomeActive() {
+        // Nếu user đã revoke quyền Accessibility trong System Settings → bật lại popup hướng dẫn
+        if !AXIsProcessTrusted() && !AccessibilityPermissionWindow.shared.isVisible {
+            print("DEBUG: Quyền Accessibility đã bị revoke runtime, hiển thị popup")
+            showAccessibilityPermissionWindow()
+        }
     }
     
     
@@ -194,7 +314,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "O": 0x1F, "U": 0x20, "[": 0x21, "I": 0x22, "P": 0x23,
             "L": 0x25, "J": 0x26, "'": 0x27, "K": 0x28, ";": 0x29,
             "\\": 0x2A, ",": 0x2B, "/": 0x2C, "N": 0x2D, "M": 0x2E,
-            ".": 0x2F
+            ".": 0x2F,
+            // Function keys
+            "F1": 0x7A, "F2": 0x78, "F3": 0x63, "F4": 0x76,
+            "F5": 0x60, "F6": 0x61, "F7": 0x62, "F8": 0x64,
+            "F9": 0x65, "F10": 0x6D, "F11": 0x67, "F12": 0x6F,
+            "F13": 0x69, "F14": 0x6B, "F15": 0x71, "F16": 0x6A,
+            "F17": 0x40, "F18": 0x4F, "F19": 0x50, "F20": 0x5A,
+            // Arrows + space + tab/return
+            "Space": 0x31, "←": 0x7B, "→": 0x7C, "↓": 0x7D, "↑": 0x7E,
+            "Tab": 0x30, "Return": 0x24, "Enter": 0x4C
         ]
         return keyMap[key]
     }
@@ -203,16 +332,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("DEBUG: Đang mở cửa sổ cài đặt...")
         SettingsWindow.shared.show()
         print("DEBUG: Cửa sổ cài đặt đã được mở")
-    }
-    
-    @objc func showBuyMeACoffee() {
-        print("DEBUG: Đang mở cửa sổ Buy me a coffee...")
-        BuyMeCoffeeWindow.shared.show()
-    }
-    
-    @objc func showContact() {
-        print("DEBUG: Đang mở cửa sổ Liên hệ & góp ý...")
-        ContactWindow.shared.show()
     }
     
     @objc func checkForUpdates() {
@@ -244,9 +363,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isFloatingPanel = true
         panel.level = .popUpMenu
         panel.hidesOnDeactivate = false
-        panel.backgroundColor = .clear
         panel.isMovableByWindowBackground = false
-        panel.titlebarAppearsTransparent = false
+        // Titlebar trong suốt → kế thừa backgroundColor → custom theme phủ luôn lên titlebar
+        panel.titlebarAppearsTransparent = true
         panel.standardWindowButton(.closeButton)?.isHidden = false
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
@@ -259,9 +378,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.close()
         }
         removeEventMonitor()
-        
+        tearDownAnchorObservers()
+
         let mouseLocation = NSEvent.mouseLocation
-        let popoverSize = NSSize(width: 300, height: 450)
 
         // Mặc định: cửa sổ nằm ngay bên dưới và bên phải con trỏ
         // (NSWindow origin = góc bottom-left → top-left = cursor)
@@ -284,52 +403,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 popoverOriginY = visibleFrame.maxY - popoverSize.height
             }
         }
-        
+
         // Tái sử dụng panel hoặc tạo mới
         let panel = virtualWindow ?? createPanel()
         virtualWindow = panel
-        
+
+        // Cursor mode: level cao để stay-on-top, click outside dismiss
+        panel.level = .popUpMenu
+        panel.backgroundColor = NSColor(Settings.shared.themedBackground)
+
         panel.setFrame(
             NSRect(x: popoverOriginX, y: popoverOriginY, width: popoverSize.width, height: popoverSize.height),
             display: false
         )
-        
-        // Refresh view
-        func refreshPanelView() {
-            let items = self.clipboardManager.getHistory() ?? []
-            let clipboardView = ClipboardHistoryView(items: items, onItemSelected: { [weak self] item in
-                self?.handleItemSelected(item)
-                panel.close()
-            }, onClearAll: { [weak self] in
-                self?.clipboardManager.clearHistory()
-                refreshPanelView()
-            }, onCopyOnly: { item in
-                panel.close()
-            }, onTogglePin: { [weak self] item in
-                self?.clipboardManager.togglePin(item)
-                refreshPanelView()
-            }, onDeleteItem: { [weak self] item in
-                self?.clipboardManager.removeItem(item)
-                refreshPanelView()
-            }, onToggleBookmark: { [weak self] item in
-                self?.clipboardManager.toggleBookmark(item)
-                refreshPanelView()
-            }, onClearBookmarks: { [weak self] in
-                self?.clipboardManager.clearBookmarks()
-                refreshPanelView()
-            }, onClearByType: { [weak self] type in
-                self?.clipboardManager.clearByType(type)
-                refreshPanelView()
-            })
-            
-            let hostingView = NSHostingView(rootView: clipboardView)
-            hostingView.frame = NSRect(origin: .zero, size: popoverSize)
-            panel.contentView = hostingView
-        }
-        
-        refreshPanelView()
+
+        applyPanelContent(to: panel)
         panel.makeKeyAndOrderFront(nil)
-        
+
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self, weak panel] event in
             if let panel = panel, panel.isVisible {
                 let mouseLocation = NSEvent.mouseLocation
@@ -373,9 +463,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func applicationWillTerminate(_ notification: Notification) {
-        // Đóng tất cả các cửa sổ khi ứng dụng kết thúc
-        BuyMeCoffeeWindow.shared.close()
-        ContactWindow.shared.close()
         AccessibilityPermissionWindow.shared.close()
     }
     

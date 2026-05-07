@@ -28,12 +28,12 @@ struct AccessibilityPermissionView: View {
                     }
                     
                     // Title
-                    Text("Yêu cầu quyền Accessibility")
+                    Text(Localization.shared.localizedString("perm_request_title"))
                         .font(.title)
                         .fontWeight(.bold)
                         .foregroundColor(.white)
-                    
-                    Text("Để Clipboard hoạt động tốt nhất")
+
+                    Text(Localization.shared.localizedString("perm_request_subtitle"))
                         .font(.subheadline)
                         .foregroundColor(.white.opacity(0.95))
                 }
@@ -48,45 +48,45 @@ struct AccessibilityPermissionView: View {
                     FeatureRow(
                         icon: "doc.on.clipboard.fill",
                         iconColor: .green,
-                        title: "Tự động paste",
-                        description: "Paste nội dung ngay khi chọn từ lịch sử"
+                        title: Localization.shared.localizedString("perm_feature_paste_title"),
+                        description: Localization.shared.localizedString("perm_feature_paste_desc")
                     )
-                    
+
                     FeatureRow(
                         icon: "cursorarrow.click.2",
                         iconColor: .blue,
-                        title: "Phát hiện con trỏ",
-                        description: "Hiển thị cửa sổ đúng vị trí đang làm việc"
+                        title: Localization.shared.localizedString("perm_feature_cursor_title"),
+                        description: Localization.shared.localizedString("perm_feature_cursor_desc")
                     )
-                    
+
                     FeatureRow(
                         icon: "keyboard.fill",
                         iconColor: .orange,
-                        title: "Phím tắt thông minh",
-                        description: "Giả lập Command+V để paste tự động"
+                        title: Localization.shared.localizedString("perm_feature_keyboard_title"),
+                        description: Localization.shared.localizedString("perm_feature_keyboard_desc")
                     )
                 }
                 .padding(20)
-                .background(Color.white)
+                .background(Color(NSColor.controlBackgroundColor))
                 .cornerRadius(12)
                 .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                
+
                 // Instructions
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {
                         Image(systemName: "info.circle.fill")
                             .foregroundColor(.blue)
-                        Text("Hướng dẫn nhanh:")
+                        Text(Localization.shared.localizedString("perm_quick_guide"))
                             .font(.headline)
-                            .foregroundColor(.black)
+                            .foregroundColor(.primary)
                     }
-                    
-                    InstructionStep(number: "1", text: "Click nút 'Mở System Settings'")
-                    InstructionStep(number: "2", text: "Tìm 'Clipboard' và bật toggle")
-                    InstructionStep(number: "3", text: "Quay lại app - cửa sổ sẽ tự đóng")
+
+                    InstructionStep(number: "1", text: Localization.shared.localizedString("perm_step_1"))
+                    InstructionStep(number: "2", text: Localization.shared.localizedString("perm_step_2"))
+                    InstructionStep(number: "3", text: Localization.shared.localizedString("perm_step_3"))
                 }
                 .padding(16)
-                .background(Color.white)
+                .background(Color(NSColor.controlBackgroundColor))
                 .cornerRadius(10)
                 .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                 
@@ -96,7 +96,7 @@ struct AccessibilityPermissionView: View {
                     Button(action: onOpenSettings) {
                         HStack(spacing: 8) {
                             Image(systemName: "gearshape.fill")
-                            Text("Mở System Settings")
+                            Text(Localization.shared.localizedString("perm_open_settings"))
                                 .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
@@ -120,12 +120,12 @@ struct AccessibilityPermissionView: View {
                     }) {
                         HStack(spacing: 6) {
                             Image(systemName: "xmark.circle")
-                            Text("Thoát ứng dụng")
+                            Text(Localization.shared.localizedString("perm_quit_app"))
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: 40)
-                        .background(Color(red: 0.96, green: 0.96, blue: 0.96))
-                        .foregroundColor(Color(red: 0.5, green: 0.5, blue: 0.5))
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .foregroundColor(.secondary)
                         .cornerRadius(8)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -136,9 +136,9 @@ struct AccessibilityPermissionView: View {
                         Image(systemName: "arrow.clockwise.circle.fill")
                             .font(.system(size: 12))
                             .foregroundColor(.green)
-                        Text("Cửa sổ này sẽ tự động đóng khi bạn cấp quyền")
+                        Text(Localization.shared.localizedString("perm_auto_close"))
                             .font(.system(size: 11))
-                            .foregroundColor(Color(red: 0.4, green: 0.4, blue: 0.4))
+                            .foregroundColor(.secondary)
                     }
                     .padding(.top, 4)
                 }
@@ -168,10 +168,10 @@ struct FeatureRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.black)
+                    .foregroundColor(.primary)
                 Text(description)
                     .font(.system(size: 12))
-                    .foregroundColor(Color(red: 0.4, green: 0.4, blue: 0.4))
+                    .foregroundColor(.secondary)
             }
             
             Spacer()
@@ -195,7 +195,7 @@ struct InstructionStep: View {
             
             Text(text)
                 .font(.system(size: 13))
-                .foregroundColor(.black)
+                .foregroundColor(.primary)
             
             Spacer()
         }
@@ -215,12 +215,12 @@ class AccessibilityPermissionWindow: NSWindow {
             defer: false
         )
         
-        self.title = "Clipboard - Yêu cầu quyền"
+        self.title = Localization.shared.localizedString("perm_window_title")
         self.isReleasedWhenClosed = false
         self.center()
         self.level = .floating
         self.titlebarAppearsTransparent = true
-        self.backgroundColor = NSColor(red: 0.97, green: 0.97, blue: 0.98, alpha: 1.0)
+        self.backgroundColor = NSColor(Settings.shared.themedBackground)
         
         // Lắng nghe khi app được focus trở lại
         NotificationCenter.default.addObserver(
@@ -238,13 +238,16 @@ class AccessibilityPermissionWindow: NSWindow {
     
     func show(onPermissionGranted: @escaping () -> Void) {
         self.onPermissionGranted = onPermissionGranted
-        
+
         let contentView = AccessibilityPermissionView(
             onOpenSettings: {
                 self.openAccessibilitySettings()
             }
         )
-        
+
+        // Cập nhật màu theme mỗi lần show (nếu user vừa đổi)
+        self.backgroundColor = NSColor(Settings.shared.themedBackground)
+
         self.contentView = NSHostingView(rootView: contentView)
         self.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -284,8 +287,8 @@ class AccessibilityPermissionWindow: NSWindow {
                 NSApp.activate(ignoringOtherApps: true)
                 
                 let alert = NSAlert()
-                alert.messageText = "Thành công! ✅"
-                alert.informativeText = "Clipboard đã có quyền Accessibility. Bạn có thể bắt đầu sử dụng app."
+                alert.messageText = Localization.shared.localizedString("perm_granted_title")
+                alert.informativeText = Localization.shared.localizedString("perm_granted_message")
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "OK")
                 alert.runModal()

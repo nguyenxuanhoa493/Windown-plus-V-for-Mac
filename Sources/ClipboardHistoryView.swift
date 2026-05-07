@@ -3,12 +3,26 @@ import Cocoa
 import libxlsxwriter
 
 enum ContentFilter: String, CaseIterable {
-    case all = "Tất cả"
-    case text = "Văn bản"
-    case image = "Hình ảnh"
-    case file = "Tệp tin"
-    case bookmark = "Bookmark"
-    
+    case all
+    case text
+    case image
+    case file
+    case bookmark
+
+    var localizationKey: String {
+        switch self {
+        case .all: return "filter_all"
+        case .text: return "filter_text"
+        case .image: return "filter_image"
+        case .file: return "filter_file"
+        case .bookmark: return "filter_bookmark"
+        }
+    }
+
+    var displayName: String {
+        Localization.shared.localizedString(localizationKey)
+    }
+
     var icon: String {
         switch self {
         case .all: return "square.grid.2x2"
@@ -18,7 +32,7 @@ enum ContentFilter: String, CaseIterable {
         case .bookmark: return "bookmark"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .all: return .primary
@@ -33,13 +47,11 @@ enum ContentFilter: String, CaseIterable {
 struct ClipboardHistoryView: View {
     let items: [ClipboardItem]
     let onItemSelected: (ClipboardItem) -> Void
-    let onClearAll: () -> Void
+    let onClearAll: (Bool, Bool) -> Void  // (includePinned, includeBookmarked)
     let onCopyOnly: ((ClipboardItem) -> Void)?
     let onTogglePin: ((ClipboardItem) -> Void)?
     let onDeleteItem: ((ClipboardItem) -> Void)?
     let onToggleBookmark: ((ClipboardItem) -> Void)?
-    let onClearBookmarks: (() -> Void)?
-    let onClearByType: ((ClipboardItemType) -> Void)?
     @ObservedObject private var settings = Settings.shared
     @State private var selectedFilter: ContentFilter = .all
     @State private var isSearching = false
@@ -47,7 +59,9 @@ struct ClipboardHistoryView: View {
     @State private var debouncedSearchText = ""
     @State private var searchWorkItem: DispatchWorkItem?
     @State private var isSearchFieldFocused = false
-    
+    @State private var keyboardMonitor: Any?
+    @State private var selectedIndex: Int = 0
+
     // Helper để check file có phải ảnh không
     private func isImageFile(_ item: ClipboardItem) -> Bool {
         guard item.type == .file, let fileURL = item.fileURL else { return false }
@@ -63,10 +77,21 @@ struct ClipboardHistoryView: View {
     
     private func matchesSearch(_ item: ClipboardItem, _ query: String) -> Bool {
         guard !query.isEmpty else { return true }
-        guard let text = item.text else { return false }
-        let normalizedText = ClipboardHistoryView.removeDiacritics(text.lowercased())
         let normalizedQuery = ClipboardHistoryView.removeDiacritics(query.lowercased())
-        return normalizedText.contains(normalizedQuery)
+
+        if let text = item.text,
+           ClipboardHistoryView.removeDiacritics(text.lowercased()).contains(normalizedQuery) {
+            return true
+        }
+        if let fileName = item.fileName,
+           ClipboardHistoryView.removeDiacritics(fileName.lowercased()).contains(normalizedQuery) {
+            return true
+        }
+        if let appName = item.sourceAppName,
+           ClipboardHistoryView.removeDiacritics(appName.lowercased()).contains(normalizedQuery) {
+            return true
+        }
+        return false
     }
     
     var filteredItems: [ClipboardItem] {
@@ -90,6 +115,37 @@ struct ClipboardHistoryView: View {
         return result
     }
     
+    private func showClearDataDialog() {
+        let loc = Localization.shared
+        let alert = NSAlert()
+        alert.messageText = loc.localizedString("clear_dialog_title")
+        alert.informativeText = loc.localizedString("clear_dialog_message")
+        alert.alertStyle = .warning
+
+        // Accessory view: 2 checkbox (mặc định OFF)
+        let pinCheck = NSButton(checkboxWithTitle: loc.localizedString("clear_dialog_include_pinned"),
+                                target: nil, action: nil)
+        pinCheck.state = .off
+        let bmCheck = NSButton(checkboxWithTitle: loc.localizedString("clear_dialog_include_bookmarked"),
+                               target: nil, action: nil)
+        bmCheck.state = .off
+
+        let stack = NSStackView(views: [pinCheck, bmCheck])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = true
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: 50)
+        alert.accessoryView = stack
+
+        alert.addButton(withTitle: loc.localizedString("clear_dialog_confirm"))
+        alert.addButton(withTitle: loc.localizedString("clear_dialog_cancel"))
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            onClearAll(pinCheck.state == .on, bmCheck.state == .on)
+        }
+    }
+
     private func focusSearchField() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             isSearchFieldFocused = true
@@ -110,123 +166,71 @@ struct ClipboardHistoryView: View {
             // Filter bar - có thể kéo để move window
             HStack(spacing: 8) {
                 ForEach(ContentFilter.allCases, id: \.self) { filter in
-                    Button(action: {
+                    PillIconButton(
+                        systemImage: filter.icon,
+                        isActive: selectedFilter == filter,
+                        activeBackground: settings.themedAccent,
+                        activeForeground: .white,
+                        inactiveBackground: settings.themedSurface,
+                        inactiveForeground: settings.isCustomThemeActive ? settings.themedForeground.opacity(0.7) : filter.color
+                    ) {
                         selectedFilter = filter
-                        if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
-                            window.title = filter == .all ? "Clipboard" : "Clipboard - \(filter.rawValue)"
-                        }
-                    }) {
-                        Image(systemName: filter.icon)
-                            .font(.system(size: 14))
-                            .frame(width: 32, height: 28)
-                            .background(selectedFilter == filter ? Color.accentColor : Color(.controlBackgroundColor))
-                            .foregroundColor(selectedFilter == filter ? .white : filter.color)
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .tooltip(filter.rawValue)
-                    .onHover { hovering in
-                        if hovering {
-                            NSCursor.pointingHand.push()
-                        } else {
-                            NSCursor.pop()
+                        if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
+                            window.title = filter == .all ? "Clipboard" : "Clipboard - \(filter.displayName)"
                         }
                     }
+                    .tooltip(filter.displayName)
                 }
                 
                 Spacer()
+                    .frame(minWidth: 12)
                     .contentShape(Rectangle())
+                    // Drag move window CHỈ ở vùng trống giữa filter và search button.
+                    // Để DragGesture trên Button parent sẽ nuốt mouseDown → click filter không fire.
                     .gesture(
-                        DragGesture()
+                        DragGesture(minimumDistance: 2)
                             .onChanged { value in
-                                // Kéo window
-                                if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
-                                    let currentLocation = NSEvent.mouseLocation
-                                    let newOrigin = NSPoint(
-                                        x: currentLocation.x - value.startLocation.x,
-                                        y: currentLocation.y + value.startLocation.y - window.frame.height
-                                    )
-                                    window.setFrameOrigin(newOrigin)
+                                guard let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) else {
+                                    return
                                 }
+                                let currentLocation = NSEvent.mouseLocation
+                                var newOrigin = NSPoint(
+                                    x: currentLocation.x - value.startLocation.x,
+                                    y: currentLocation.y + value.startLocation.y - window.frame.height
+                                )
+                                let screen = NSScreen.screens.first(where: { $0.frame.contains(currentLocation) }) ?? NSScreen.main
+                                if let visible = screen?.visibleFrame {
+                                    newOrigin.x = max(visible.minX, min(newOrigin.x, visible.maxX - window.frame.width))
+                                    newOrigin.y = max(visible.minY, min(newOrigin.y, visible.maxY - window.frame.height))
+                                }
+                                window.setFrameOrigin(newOrigin)
                             }
                     )
-                
+
                 if settings.enableSearch {
-                    Button(action: {
+                    PillIconButton(
+                        systemImage: "magnifyingglass",
+                        isActive: isSearching,
+                        activeBackground: settings.themedAccent,
+                        activeForeground: .white,
+                        inactiveBackground: settings.themedSurface,
+                        inactiveForeground: .secondary
+                    ) {
                         if !isSearching {
                             isSearching = true
-                            focusSearchField()
-                        } else {
-                            // Nếu đã mở thì focus lại vào ô search
-                            focusSearchField()
                         }
-                    }) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 14))
-                            .frame(width: 32, height: 28)
-                            .background(isSearching ? Color.accentColor : Color(.controlBackgroundColor))
-                            .foregroundColor(isSearching ? .white : .secondary)
-                            .cornerRadius(6)
+                        focusSearchField()
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .tooltip("Tìm kiếm")
-                    .onHover { hovering in
-                        if hovering {
-                            NSCursor.pointingHand.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
+                    .tooltip(Localization.shared.localizedString("search_tooltip"))
                 }
                 
-                if !filteredItems.isEmpty {
-                    Button(action: {
-                        switch selectedFilter {
-                        case .all:
-                            onClearAll()
-                        case .text:
-                            onClearByType?(.text)
-                        case .image:
-                            onClearByType?(.image)
-                        case .file:
-                            onClearByType?(.file)
-                        case .bookmark:
-                            onClearBookmarks?()
-                        }
-                    }) {
-                        Image(systemName: "trash")
-                            .foregroundColor(.red)
-                            .padding(8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .tooltip("Xóa \(selectedFilter.rawValue.lowercased())")
-                    .onHover { hovering in
-                        if hovering {
-                            NSCursor.pointingHand.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
-                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(.windowBackgroundColor))
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        // Kéo window
-                        if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
-                            let currentLocation = NSEvent.mouseLocation
-                            let newOrigin = NSPoint(
-                                x: currentLocation.x - value.startLocation.x,
-                                y: currentLocation.y + value.startLocation.y - window.frame.height
-                            )
-                            window.setFrameOrigin(newOrigin)
-                        }
-                    }
-            )
-            
+            .background(settings.themedBackground)
+            // Filter bar phải paint trên cùng để tooltip (offset y+30) không bị list items đè
+            .zIndex(2)
+
             // Search bar
             if isSearching {
                 HStack(spacing: 6) {
@@ -234,7 +238,7 @@ struct ClipboardHistoryView: View {
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                     
-                    FocusableTextField(text: $searchText, placeholder: "Tìm kiếm...", isFocused: $isSearchFieldFocused)
+                    FocusableTextField(text: $searchText, placeholder: Localization.shared.localizedString("search_placeholder"), isFocused: $isSearchFieldFocused)
                         .frame(height: 22)
                         .onChange(of: searchText) { newValue in
                             debounceSearch(newValue)
@@ -256,59 +260,412 @@ struct ClipboardHistoryView: View {
                 .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(.controlBackgroundColor))
+                        .fill(settings.themedSurface)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor.opacity(0.5), lineWidth: 1.5)
+                        .stroke(settings.themedAccent.opacity(0.5), lineWidth: 1.5)
                 )
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
             }
             
-            ScrollView(showsIndicators: false) {
-                LazyVStack(spacing: 8) {
-                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                        ClipboardItemView(item: item, index: index + 1, onItemSelected: onItemSelected, onCopyOnly: onCopyOnly, onTogglePin: onTogglePin, onDeleteItem: onDeleteItem, onToggleBookmark: onToggleBookmark)
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    // Anchor cho scroll-to-top
+                    Color.clear.frame(height: 0).id("__top__")
+                    if filteredItems.isEmpty {
+                        emptyState
+                    } else {
+                        LazyVStack(spacing: settings.useNativeUI ? 0 : 8) {
+                            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                                ClipboardItemView(
+                                    item: item,
+                                    index: index + 1,
+                                    isSelected: index == selectedIndex,
+                                    isNativeStyle: settings.useNativeUI,
+                                    onItemSelected: onItemSelected,
+                                    onCopyOnly: onCopyOnly,
+                                    onTogglePin: onTogglePin,
+                                    onDeleteItem: onDeleteItem,
+                                    onToggleBookmark: onToggleBookmark
+                                )
+                            }
+                        }
+                        .padding(.horizontal, settings.useNativeUI ? 0 : 8)
+                        .padding(.top, settings.useNativeUI ? 0 : 8)
+                        .padding(.bottom, settings.useNativeUI ? 0 : 12)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 8)
-                .padding(.bottom, 12)
+                .onChange(of: selectedFilter) { _ in
+                    selectedIndex = 0
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("__top__", anchor: .top)
+                    }
+                }
+                .onChange(of: debouncedSearchText) { _ in
+                    selectedIndex = 0
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("__top__", anchor: .top)
+                    }
+                }
+                .onChange(of: selectedIndex) { newIndex in
+                    let current = filteredItems
+                    if newIndex >= 0 && newIndex < current.count {
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            proxy.scrollTo(current[newIndex].id, anchor: .center)
+                        }
+                    }
+                }
             }
+
+            shortcutHintBar
         }
         .frame(width: 300, height: 450)
-        .background(Color(.windowBackgroundColor))
+        .background(settings.themedBackground)
+        .modifier(ConditionalThemeModifier(theme: settings.appTheme, active: settings.isCustomThemeActive))
         .onAppear {
-            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                // Nếu user đã tắt tính năng search thì bỏ qua
-                if !Settings.shared.enableSearch { return event }
-                // Nếu đang search rồi thì không xử lý
-                if isSearching { return event }
-                
-                // Bỏ qua phím đặc biệt (Enter, Escape, Tab, Arrow keys...)
-                let specialKeys: Set<UInt16> = [36, 53, 48, 123, 124, 125, 126, 51, 117]
-                if specialKeys.contains(event.keyCode) { return event }
-                
-                // Bỏ qua nếu có modifier (Cmd, Ctrl) trừ Shift và CapsLock
-                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .capsLock])
-                if !mods.isEmpty { return event }
-                
-                // Kích hoạt search khi gõ ký tự
-                if let chars = event.characters, !chars.isEmpty {
-                    isSearching = true
-                    searchText = chars
-                    debounceSearch(chars)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        isSearchFieldFocused = true
+            installKeyboardMonitor()
+        }
+        .onDisappear {
+            removeKeyboardMonitor()
+        }
+    }
+
+    @ViewBuilder
+    private var shortcutHintBar: some View {
+        HStack(spacing: 10) {
+            shortcutHint(keys: "↑↓", label: Localization.shared.localizedString("hint_navigate"))
+            Text("·").foregroundColor(.secondary.opacity(0.5))
+            shortcutHint(keys: "⏎", label: Localization.shared.localizedString("hint_paste"))
+            if settings.enableNumberShortcuts {
+                Text("·").foregroundColor(.secondary.opacity(0.5))
+                shortcutHint(keys: "⌘1-9", label: Localization.shared.localizedString("hint_quick_paste"))
+            }
+            Spacer(minLength: 4)
+            // More menu (Settings + Clear data)
+            MenuPillIconButton(
+                systemImage: "gearshape",
+                activeBackground: settings.themedAccent,
+                inactiveBackground: Color.clear,
+                inactiveForeground: .secondary,
+                size: CGSize(width: 22, height: 20),
+                cornerRadius: 4,
+                fontSize: 11
+            ) {
+                Button {
+                    SettingsWindow.shared.show()
+                } label: {
+                    Label(Localization.shared.localizedString("settings"), systemImage: "gearshape")
+                }
+                Divider()
+                Button {
+                    showClearDataDialog()
+                } label: {
+                    Label(Localization.shared.localizedString("menu_clear_data"), systemImage: "trash")
+                }
+            }
+            .tooltip(Localization.shared.localizedString("menu_more"))
+        }
+        .font(.system(size: 10))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            settings.themedBackground
+                .overlay(
+                    Rectangle()
+                        .fill(Color(NSColor.separatorColor))
+                        .frame(height: 0.5),
+                    alignment: .top
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func shortcutHint(keys: String, label: String) -> some View {
+        HStack(spacing: 3) {
+            Text(keys)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(.primary.opacity(0.8))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(settings.themedAccent.opacity(0.15))
+                )
+            Text(label)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        let isSearchActive = !debouncedSearchText.isEmpty
+        VStack(spacing: 8) {
+            Spacer().frame(height: 60)
+            Image(systemName: isSearchActive ? "magnifyingglass" : "tray")
+                .font(.system(size: 36))
+                .foregroundColor(.secondary)
+            Text(Localization.shared.localizedString(isSearchActive ? "empty_search_no_results" : "empty_history"))
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func installKeyboardMonitor() {
+        // Đảm bảo không leak monitor cũ (View có thể onAppear lại sau khi onDisappear)
+        removeKeyboardMonitor()
+        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // ESC luôn đóng popup
+            if event.keyCode == 53 {
+                if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
+                    window.close()
+                }
+                return nil
+            }
+
+            let items = filteredItems
+            let count = items.count
+
+            // Cmd+1..9 → paste item thứ N (1-based)
+            if Settings.shared.enableNumberShortcuts {
+                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                if mods == .command, let idx = ClipboardHistoryView.numberKeyToIndex(event.keyCode) {
+                    if idx < count {
+                        onItemSelected(items[idx])
                     }
+                    return nil
+                }
+            }
+
+            // Khi search bar đang mở → TextField cần nhận chữ + delete + space.
+            // Chỉ giữ lại arrow/enter cho điều hướng list, return event cho mọi phím khác.
+            if isSearching {
+                if event.keyCode == 125 || event.keyCode == 126 {
+                    return handleArrowSelection(event: event, count: count)
+                }
+                if event.keyCode == 36 || event.keyCode == 76 {
+                    if count > 0 { triggerSelectedPaste(items: items) }
                     return nil
                 }
                 return event
             }
+
+            // ↓ (125) / ↑ (126)
+            if event.keyCode == 125 || event.keyCode == 126 {
+                return handleArrowSelection(event: event, count: count)
+            }
+
+            // Return (36) hoặc Enter (76) → paste item đang chọn
+            if event.keyCode == 36 || event.keyCode == 76 {
+                if count > 0 { triggerSelectedPaste(items: items) }
+                return nil
+            }
+
+            // Delete (51) hoặc Forward Delete (117) → xoá item đang chọn
+            if event.keyCode == 51 || event.keyCode == 117 {
+                if count > 0, selectedIndex >= 0, selectedIndex < count {
+                    let item = items[selectedIndex]
+                    onDeleteItem?(item)
+                    if selectedIndex >= count - 1, selectedIndex > 0 {
+                        selectedIndex -= 1
+                    }
+                }
+                return nil
+            }
+
+            // Nếu user đã tắt tính năng search thì bỏ qua phần auto-focus search
+            if !Settings.shared.enableSearch { return event }
+            // Nếu đang search rồi thì không xử lý
+            if isSearching { return event }
+
+            // Bỏ qua phím đặc biệt còn lại (Tab)
+            let specialKeys: Set<UInt16> = [48]
+            if specialKeys.contains(event.keyCode) { return event }
+
+            // Bỏ qua nếu có modifier (Cmd, Ctrl) trừ Shift và CapsLock
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .capsLock])
+            if !mods.isEmpty { return event }
+
+            // Kích hoạt search khi gõ ký tự
+            if let chars = event.characters, !chars.isEmpty {
+                isSearching = true
+                searchText = chars
+                debounceSearch(chars)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isSearchFieldFocused = true
+                }
+                return nil
+            }
+            return event
         }
     }
-    
+
+    /// Map keyCode của số 1..9 trên top-row qua index 0..8.
+    private static func numberKeyToIndex(_ keyCode: UInt16) -> Int? {
+        switch keyCode {
+        case 0x12: return 0  // 1
+        case 0x13: return 1  // 2
+        case 0x14: return 2  // 3
+        case 0x15: return 3  // 4
+        case 0x17: return 4  // 5
+        case 0x16: return 5  // 6
+        case 0x1A: return 6  // 7
+        case 0x1C: return 7  // 8
+        case 0x19: return 8  // 9
+        default: return nil
+        }
+    }
+
+    private func handleArrowSelection(event: NSEvent, count: Int) -> NSEvent? {
+        guard count > 0 else { return nil }
+        if event.keyCode == 125 {
+            // ↓
+            selectedIndex = min(selectedIndex + 1, count - 1)
+        } else if event.keyCode == 126 {
+            // ↑
+            selectedIndex = max(selectedIndex - 1, 0)
+        }
+        return nil
+    }
+
+    private func triggerSelectedPaste(items: [ClipboardItem]) {
+        guard selectedIndex >= 0, selectedIndex < items.count else { return }
+        let item = items[selectedIndex]
+        onItemSelected(item)
+    }
+
+    private func removeKeyboardMonitor() {
+        if let monitor = keyboardMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyboardMonitor = nil
+        }
+    }
+
+}
+
+/// Icon button cùng style với filter/search/trash trong popup.
+/// Khi hover nền hiện nhạt hơn (~18% opacity của activeBackground) để feedback "có thể click".
+struct PillIconButton: View {
+    let systemImage: String
+    let isActive: Bool
+    let activeBackground: Color
+    let activeForeground: Color
+    let inactiveBackground: Color
+    let inactiveForeground: Color
+    var size: CGSize = CGSize(width: 32, height: 28)
+    var cornerRadius: CGFloat = 6
+    var fontSize: CGFloat = 14
+    var fontWeight: Font.Weight = .regular
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: fontSize, weight: fontWeight))
+                .frame(width: size.width, height: size.height)
+                .background(currentBackground)
+                .foregroundColor(isActive ? activeForeground : inactiveForeground)
+                .cornerRadius(cornerRadius)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+
+    private var currentBackground: Color {
+        if isActive { return activeBackground }
+        if isHovered { return activeBackground.opacity(0.18) }
+        return inactiveBackground
+    }
+}
+
+/// Pill icon button mở dropdown menu (style giống PillIconButton, không có active state).
+struct MenuPillIconButton<Items: View>: View {
+    let systemImage: String
+    let activeBackground: Color
+    let inactiveBackground: Color
+    let inactiveForeground: Color
+    var size: CGSize = CGSize(width: 32, height: 28)
+    var cornerRadius: CGFloat = 6
+    var fontSize: CGFloat = 14
+    @ViewBuilder let menuContent: () -> Items
+    @State private var isHovered = false
+
+    var body: some View {
+        Menu {
+            menuContent()
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: fontSize))
+                .frame(width: size.width, height: size.height)
+                .background(isHovered ? activeBackground.opacity(0.18) : inactiveBackground)
+                .foregroundColor(inactiveForeground)
+                .cornerRadius(cornerRadius)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: size.width, height: size.height)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+}
+
+/// Action button trong item row (open, copy, save, json↔table...).
+/// Background màu khi default; hover làm nhạt để feedback "có thể click".
+/// Khi custom theme đang active → background = accent của theme thay vì semantic color.
+struct ActionIconButton: View {
+    let systemImage: String
+    let background: Color
+    var size: CGSize = CGSize(width: 24, height: 24)
+    var fontSize: CGFloat = 12
+    let action: () -> Void
+    @State private var isHovered = false
+    @ObservedObject private var settings = Settings.shared
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: fontSize))
+                .foregroundColor(.white)
+                .frame(width: size.width, height: size.height)
+                .background(isHovered ? effectiveBackground.opacity(0.7) : effectiveBackground)
+                .cornerRadius(6)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+
+    private var effectiveBackground: Color {
+        // Khi custom theme active, đồng bộ tất cả action button về accent của theme
+        if settings.isCustomThemeActive, let accent = settings.appTheme.accent {
+            return accent
+        }
+        return background
+    }
 }
 
 struct FocusableTextField: NSViewRepresentable {
@@ -365,20 +722,53 @@ struct FocusableTextField: NSViewRepresentable {
 }
 
 struct ClipboardItemView: View {
-    private static var fileIconCache: [String: NSImage] = [:]
-    
+    private static let fileIconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 256
+        return cache
+    }()
+
+    /// Export image clipboard item ra file PNG tạm để hỗ trợ drag-drop ra Finder/app khác.
+    /// Tên file dựa hash của fileName để dedup → 2 lần drag cùng ảnh không tạo 2 file trùng.
+    static func exportImageToTempFile(_ item: ClipboardItem) -> URL? {
+        guard item.type == .image, let imageData = item.imageData else { return nil }
+        let fileName = "Clipboard_\(item.timeString.replacingOccurrences(of: ":", with: "-")).png"
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        if FileManager.default.fileExists(atPath: tempURL.path) {
+            return tempURL  // reuse
+        }
+        guard let nsImage = NSImage(data: imageData),
+              let tiff = nsImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            return nil
+        }
+        do {
+            try pngData.write(to: tempURL)
+            return tempURL
+        } catch {
+            print("DEBUG: exportImageToTempFile lỗi: \(error)")
+            return nil
+        }
+    }
+
     static func cachedFileIcon(for path: String) -> NSImage {
-        if let cached = fileIconCache[path] {
+        let key = path as NSString
+        if let cached = fileIconCache.object(forKey: key) {
             return cached
         }
-        let icon = NSWorkspace.shared.icon(forFile: path)
+        // NSWorkspace có thể trả về instance dùng chung — copy trước khi mutate size
+        let raw = NSWorkspace.shared.icon(forFile: path)
+        let icon = (raw.copy() as? NSImage) ?? raw
         icon.size = NSSize(width: 32, height: 32)
-        fileIconCache[path] = icon
+        fileIconCache.setObject(icon, forKey: key)
         return icon
     }
     
     let item: ClipboardItem
     let index: Int
+    var isSelected: Bool = false
+    var isNativeStyle: Bool = false
     let onItemSelected: (ClipboardItem) -> Void
     let onCopyOnly: ((ClipboardItem) -> Void)?
     let onTogglePin: ((ClipboardItem) -> Void)?
@@ -390,6 +780,7 @@ struct ClipboardItemView: View {
     @State private var showAsJSON = false
     @State private var displayText: String = ""
     @State private var cachedImage: NSImage? = nil
+    @ObservedObject private var settings = Settings.shared
     
     var typeIcon: String {
         switch item.type {
@@ -452,7 +843,7 @@ struct ClipboardItemView: View {
                         .frame(maxHeight: 50)
                         .clipped()
                 } else if item.type == .file, let fileName = item.fileName, let fileURL = item.fileURL {
-                    if isImageFile(fileURL), let image = NSImage(contentsOfFile: fileURL) {
+                    if isImageFile(fileURL), let image = cachedImage {
                         Image(nsImage: image)
                             .resizable()
                             .scaledToFit()
@@ -463,15 +854,22 @@ struct ClipboardItemView: View {
                             Image(nsImage: ClipboardItemView.cachedFileIcon(for: fileURL))
                                 .resizable()
                                 .frame(width: 24, height: 24)
-                            
+
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(fileName)
-                                    .font(.system(size: 11))
+                                    .font(.system(
+                                        size: CGFloat(settings.appFontSize),
+                                        design: settings.appFontDesign.swiftUIDesign
+                                    ))
+                                    .foregroundColor(settings.themedForeground)
                                     .lineLimit(1)
-                                
+
                                 Text(URL(fileURLWithPath: fileURL).deletingLastPathComponent().path)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.secondary)
+                                    .font(.system(
+                                        size: max(CGFloat(settings.appFontSize) - 2, 8),
+                                        design: settings.appFontDesign.swiftUIDesign
+                                    ))
+                                    .foregroundColor(settings.themedForeground.opacity(0.65))
                                     .lineLimit(1)
                             }
                             
@@ -482,8 +880,12 @@ struct ClipboardItemView: View {
                     HStack(spacing: 8) {
                         Text(displayText)
                             .lineLimit(3)
-                            .font(.system(size: 11))
-                        
+                            .font(.system(
+                                size: CGFloat(settings.appFontSize),
+                                design: settings.appFontDesign.swiftUIDesign
+                            ))
+                            .foregroundColor(settings.themedForeground)
+
                         if item.isTimestamp && Settings.shared.enableTimestampConvert {
                             Button(action: {
                                 toggleTimestampDisplay()
@@ -493,7 +895,7 @@ struct ClipboardItemView: View {
                                     .foregroundColor(.accentColor)
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .tooltip(showAsDateTime ? "Hiển thị timestamp" : "Hiển thị ngày giờ")
+                            .tooltip(Localization.shared.localizedString(showAsDateTime ? "action_show_timestamp" : "action_show_datetime"))
                             .onHover { hovering in
                                 if hovering {
                                     NSCursor.pointingHand.push()
@@ -511,7 +913,7 @@ struct ClipboardItemView: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 4)
                         .frame(minWidth: 14, minHeight: 14)
-                        .background(Color.accentColor.opacity(0.8))
+                        .background(settings.themedAccent.opacity(0.8))
                         .cornerRadius(3)
                     
                     if item.isPinned {
@@ -541,200 +943,114 @@ struct ClipboardItemView: View {
                     Image(systemName: typeIcon)
                         .font(.system(size: 10))
                         .foregroundColor(typeColor)
-                    
+
                     if let icon = item.appIcon {
                         Image(nsImage: icon)
                             .resizable()
                             .frame(width: 12, height: 12)
                     }
-                    
-                    Text(item.timeString)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    
+
                     if let appName = item.sourceAppName {
-                        Text("• \(appName)")
+                        Text(appName)
                             .font(.system(size: 10))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(settings.themedForeground.opacity(0.65))
                             .lineLimit(1)
                     }
+
+                    Spacer(minLength: 4)
+
+                    Text(item.timeString)
+                        .font(.system(size: 11))
+                        .foregroundColor(settings.themedForeground.opacity(0.65))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            
+            .padding(.vertical, isNativeStyle ? 6 : 8)
+            .padding(.horizontal, isNativeStyle ? 10 : 8)
+
             if isHovered {
                 HStack(spacing: 4) {
-                    // Open button cho file/folder/URL
+                    // Open button cho file/folder/URL/image
                     if item.type == .file, let fileURL = item.fileURL {
-                        Button(action: {
+                        ActionIconButton(systemImage: "arrow.up.forward.square", background: .green) {
                             NSWorkspace.shared.open(URL(fileURLWithPath: fileURL))
-                            // Đóng window
-                            if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                            if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
                                 window.close()
                             }
-                        }) {
-                            Image(systemName: "arrow.up.forward.square")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white)
-                                .frame(width: 24, height: 24)
-                                .background(Color.green)
-                                .cornerRadius(6)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .tooltip("Mở")
-                        .onHover { hovering in
-                            if hovering {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
-                        }
+                        .tooltip(Localization.shared.localizedString("action_open"))
                     } else if item.type == .text, let text = item.text, isURL(text), let url = getURL(), Settings.shared.enableOpenURLInBrowser {
-                        Button(action: {
+                        ActionIconButton(systemImage: "arrow.up.forward.square", background: .green) {
                             NSWorkspace.shared.open(url)
-                            // Đóng window
-                            if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                            if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
                                 window.close()
                             }
-                        }) {
-                            Image(systemName: "arrow.up.forward.square")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white)
-                                .frame(width: 24, height: 24)
-                                .background(Color.green)
-                                .cornerRadius(6)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .tooltip("Mở URL trong trình duyệt")
-                        .onHover { hovering in
-                            if hovering {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
+                        .tooltip(Localization.shared.localizedString("action_open_url_browser"))
+                    } else if item.type == .image {
+                        ActionIconButton(systemImage: "arrow.up.forward.square", background: .green) {
+                            openImageInPreview()
                         }
+                        .tooltip(Localization.shared.localizedString("action_open"))
                     }
                     
                     // Conversion and Export buttons for JSON data
                     if item.type == .text && item.isJSON {
                         HStack(spacing: 4) {
                             if Settings.shared.enableJSONToTable {
-                                Button(action: {
+                                ActionIconButton(
+                                    systemImage: showAsTable ? "curlybraces" : "tablecells",
+                                    background: .purple
+                                ) {
                                     toggleJSONDisplay()
-                                }) {
-                                    Image(systemName: showAsTable ? "curlybraces" : "tablecells")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.white)
-                                        .frame(width: 24, height: 24)
-                                        .background(Color.purple)
-                                        .cornerRadius(6)
                                 }
-                                .buttonStyle(PlainButtonStyle())
-                                .tooltip(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
+                                .tooltip(Localization.shared.localizedString(showAsTable ? "action_show_json" : "action_show_table"))
                             }
 
                             if Settings.shared.enableJSONToExcel {
-                                Button(action: {
+                                ActionIconButton(
+                                    systemImage: "tablecells.badge.ellipsis",
+                                    background: .green
+                                ) {
                                     exportJSONToExcelAndOpen()
-                                }) {
-                                    Image(systemName: "tablecells.badge.ellipsis")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.white)
-                                        .frame(width: 24, height: 24)
-                                        .background(Color.green)
-                                        .cornerRadius(6)
                                 }
-                                .buttonStyle(PlainButtonStyle())
-                                .tooltip("Xuất Excel & Mở")
-                            }
-                        }
-                        .onHover { hovering in
-                            if hovering {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
+                                .tooltip(Localization.shared.localizedString("action_export_excel_open"))
                             }
                         }
                     }
-                    
+
                     // Conversion button for Excel data
                     if item.type == .text && item.isExcelData && Settings.shared.enableTableToJSON {
-                        Button(action: {
+                        ActionIconButton(
+                            systemImage: showAsJSON ? "tablecells" : "curlybraces",
+                            background: .green
+                        ) {
                             toggleExcelDisplay()
-                        }) {
-                            Image(systemName: showAsJSON ? "tablecells" : "curlybraces")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white)
-                                .frame(width: 24, height: 24)
-                                .background(Color.green)
-                                .cornerRadius(6)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .tooltip(showAsJSON ? "Hiển thị dạng bảng" : "Hiển thị JSON")
-                        .onHover { hovering in
-                            if hovering {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
-                        }
+                        .tooltip(Localization.shared.localizedString(showAsJSON ? "action_show_table" : "action_show_json"))
                     }
-                    
+
                     // Save image button (chỉ hiện cho ảnh không phải tệp tin)
                     if item.type == .image {
-                        Button(action: {
+                        ActionIconButton(systemImage: "square.and.arrow.down", background: .green) {
                             saveImageToFile()
-                        }) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white)
-                                .frame(width: 24, height: 24)
-                                .background(Color.green)
-                                .cornerRadius(6)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .tooltip("Lưu ảnh")
-                        .onHover { hovering in
-                            if hovering {
-                                NSCursor.pointingHand.push()
-                            } else {
-                                NSCursor.pop()
-                            }
-                        }
+                        .tooltip(Localization.shared.localizedString("action_save_image"))
                     }
-                    
+
                     // Copy button
-                    Button(action: {
+                    ActionIconButton(systemImage: "doc.on.doc", background: .accentColor) {
                         item.copyOnly(displayText: displayText)
                         onCopyOnly?(item)
-                    }) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 12))
-                            .foregroundColor(.white)
-                            .frame(width: 24, height: 24)
-                            .background(Color.accentColor)
-                            .cornerRadius(6)
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .tooltip("Sao chép")
-                    .onHover { hovering in
-                        if hovering {
-                            NSCursor.pointingHand.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
+                    .tooltip(Localization.shared.localizedString("action_copy"))
                 }
                 .padding(8)
             }
         }
-        .background(isHovered ? Color(.selectedControlColor).opacity(0.3) : Color(.controlBackgroundColor))
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-        )
+        .background(rowBackground)
+        .cornerRadius(isNativeStyle ? 0 : 8)
+        .overlay(rowOverlay)
         .contentShape(Rectangle())
         .contextMenu {
             // Copy
@@ -744,10 +1060,10 @@ struct ClipboardItemView: View {
             }) {
                 HStack {
                     Image(systemName: "doc.on.doc")
-                    Text("Sao chép")
+                    Text(Localization.shared.localizedString("action_copy"))
                 }
             }
-            
+
             // Save image (chỉ hiện cho ảnh không phải tệp tin)
             if item.type == .image {
                 Button(action: {
@@ -755,42 +1071,51 @@ struct ClipboardItemView: View {
                 }) {
                     HStack {
                         Image(systemName: "square.and.arrow.down")
-                        Text("Lưu ảnh")
+                        Text(Localization.shared.localizedString("action_save_image"))
                     }
                 }
             }
-            
+
             // Open
             if item.type == .file, let fileURL = item.fileURL {
                 Button(action: {
                     NSWorkspace.shared.open(URL(fileURLWithPath: fileURL))
                     // Đóng window
-                    if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                    if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
                         window.close()
                     }
                 }) {
                     HStack {
                         Image(systemName: "arrow.up.forward.square")
-                        Text("Mở")
+                        Text(Localization.shared.localizedString("action_open"))
                     }
                 }
             } else if item.type == .text, let text = item.text, isURL(text), let url = getURL() {
                 Button(action: {
                     NSWorkspace.shared.open(url)
                     // Đóng window
-                    if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                    if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
                         window.close()
                     }
                 }) {
                     HStack {
                         Image(systemName: "arrow.up.forward.square")
-                        Text("Mở trong trình duyệt")
+                        Text(Localization.shared.localizedString("action_open_in_browser"))
+                    }
+                }
+            } else if item.type == .image {
+                Button(action: {
+                    openImageInPreview()
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.up.forward.square")
+                        Text(Localization.shared.localizedString("action_open"))
                     }
                 }
             }
-            
+
             Divider()
-            
+
             // JSON/Excel conversion menu items
             if item.isJSON {
                 Button(action: {
@@ -798,138 +1123,108 @@ struct ClipboardItemView: View {
                 }) {
                     HStack {
                         Image(systemName: showAsTable ? "curlybraces" : "tablecells")
-                        Text(showAsTable ? "Hiển thị JSON" : "Hiển thị dạng bảng")
+                        Text(Localization.shared.localizedString(showAsTable ? "action_show_json" : "action_show_table"))
                     }
                 }
-                
+
                 Button(action: {
                     exportJSONToExcelAndOpen()
                 }) {
                     HStack {
                         Image(systemName: "tablecells.badge.ellipsis")
-                        Text("Xuất Excel & Mở")
+                        Text(Localization.shared.localizedString("action_export_excel_open"))
                     }
                 }
-                
+
                 Divider()
             }
-            
+
             if item.isExcelData {
                 Button(action: {
                     toggleExcelDisplay()
                 }) {
                     HStack {
                         Image(systemName: showAsJSON ? "tablecells" : "curlybraces")
-                        Text(showAsJSON ? "Hiển thị dạng bảng" : "Hiển thị JSON")
+                        Text(Localization.shared.localizedString(showAsJSON ? "action_show_table" : "action_show_json"))
                     }
                 }
                 
                 Button(action: {
-                    // Paste Excel data as image
-                    if let imageData = generateExcelImageData() {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setData(imageData, forType: .tiff)
-                        
-                        // Trigger paste
-                        ClipboardManager.shared.ignoreNextChange()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            if let source = CGEventSource(stateID: .hidSystemState) {
-                                let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
-                                let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
-                                let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-                                let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
-                                
-                                vDown?.flags = .maskCommand
-                                vUp?.flags = .maskCommand
-                                
-                                cmdDown?.post(tap: .cghidEventTap)
-                                vDown?.post(tap: .cghidEventTap)
-                                vUp?.post(tap: .cghidEventTap)
-                                cmdUp?.post(tap: .cghidEventTap)
-                            }
-                        }
-                        
-                        // Close window
-                        if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
-                            window.close()
-                        }
-                    }
+                    pasteExcelAsImage()
                 }) {
                     HStack {
                         Image(systemName: "photo")
-                        Text("Dán như ảnh")
+                        Text(Localization.shared.localizedString("action_paste_as_image"))
                     }
                 }
-                
+
                 Divider()
             }
-            
+
             Button(action: {
                 onTogglePin?(item)
             }) {
                 HStack {
                     Image(systemName: item.isPinned ? "pin.slash" : "pin")
-                    Text(item.isPinned ? "Bỏ ghim" : "Ghim")
+                    Text(Localization.shared.localizedString(item.isPinned ? "action_unpin" : "action_pin"))
                 }
             }
-            
+
             Button(action: {
                 onToggleBookmark?(item)
             }) {
                 HStack {
                     Image(systemName: item.isBookmarked ? "bookmark.slash" : "bookmark")
-                    Text(item.isBookmarked ? "Bỏ bookmark" : "Bookmark")
+                    Text(Localization.shared.localizedString(item.isBookmarked ? "action_unbookmark" : "action_bookmark"))
                 }
             }
-            
+
             if item.type == .file {
                 Divider()
-                
+
                 Button(action: {
                     item.copyPath()
                 }) {
                     HStack {
                         Image(systemName: "doc.on.clipboard")
-                        Text("Copy đường dẫn")
+                        Text(Localization.shared.localizedString("action_copy_path"))
                     }
                 }
             }
-            
+
             Divider()
-            
+
             Button(action: {
                 onDeleteItem?(item)
             }) {
                 HStack {
                     Image(systemName: "trash")
-                    Text("Xóa")
+                    Text(Localization.shared.localizedString("action_delete"))
                 }
             }
         }
         .onDrag {
-            // Tôn trọng toggle "Kéo thả file"
             guard Settings.shared.enableDragAndDrop else { return NSItemProvider() }
-            if item.type == .file, let url = item.getFileURL() {
-                let uniqueID = UUID().uuidString
-                let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ClipboardDrag-\(uniqueID)")
-                let tempURL = tempDir.appendingPathComponent(url.lastPathComponent)
 
-                do {
-                    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-                    try FileManager.default.copyItem(at: url, to: tempURL)
+            let provider: NSItemProvider
+            if item.type == .file, let url = item.getFileURL(),
+               FileManager.default.fileExists(atPath: url.path) {
+                provider = NSItemProvider(object: url as NSURL)
+            } else if item.type == .image, let url = ClipboardItemView.exportImageToTempFile(item) {
+                provider = NSItemProvider(object: url as NSURL)
+            } else {
+                provider = NSItemProvider()
+            }
 
-                    // Cleanup temp sau 30s
-                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) {
-                        try? FileManager.default.removeItem(at: tempDir)
+            // Auto-hide popup khi user bắt đầu drag (nếu toggle bật)
+            if Settings.shared.hidePopupAfterDrag {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
+                        window.close()
                     }
-
-                    return NSItemProvider(object: tempURL as NSURL)
-                } catch {
-                    return NSItemProvider(object: url as NSURL)
                 }
             }
-            return NSItemProvider()
+            return provider
         }
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -945,13 +1240,13 @@ struct ClipboardItemView: View {
             // If item has been converted (JSON→Table, Excel→JSON, or Timestamp→DateTime), paste and close
             if showAsTable || showAsJSON || showAsDateTime {
                 item.paste(displayText: displayText)
-                if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
                     window.close()
                 }
             } else if item.type == .text && displayText != item.text {
                 // Fallback: if displayText is different, paste it
                 item.paste(displayText: displayText)
-                if let window = NSApp.windows.first(where: { $0.isVisible && $0.level == .floating }) {
+                if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
                     window.close()
                 }
             } else {
@@ -963,20 +1258,79 @@ struct ClipboardItemView: View {
         }
     }
     
+    private var rowBackground: Color {
+        let accent = settings.themedAccent
+        if isNativeStyle {
+            if isSelected { return accent.opacity(0.45) }
+            if isHovered { return accent.opacity(0.18) }
+            if index % 2 == 1 {
+                return settings.isCustomThemeActive ? settings.themedSurface : Color.primary.opacity(0.05)
+            }
+            return Color.clear
+        }
+        if isSelected { return accent.opacity(0.35) }
+        if isHovered { return accent.opacity(0.15) }
+        return settings.themedSurface
+    }
+
+    @ViewBuilder
+    private var rowOverlay: some View {
+        if isNativeStyle {
+            // Thin separator dưới mỗi row, style Finder/Mail
+            Rectangle()
+                .fill(Color(NSColor.separatorColor))
+                .frame(height: 0.5)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? settings.themedAccent : Color.gray.opacity(0.3),
+                        lineWidth: isSelected ? 1.5 : 1)
+        }
+    }
+
     private func updateDisplayText() {
         if let text = item.text {
             displayText = text
         }
-        if item.type == .image, cachedImage == nil,
-           let imageData = item.imageData {
-            cachedImage = NSImage(data: imageData)
+        loadThumbnailIfNeeded()
+    }
+
+    private func loadThumbnailIfNeeded() {
+        guard cachedImage == nil else { return }
+        // Image trong clipboard
+        if item.type == .image, let fileName = item.imageFileName {
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let data = ClipboardManager.shared.loadImageFromDisk(fileName) else { return }
+                let thumb = ImageThumbnail.load(data: data, maxPixelSize: 200)
+                DispatchQueue.main.async {
+                    self.cachedImage = thumb
+                }
+            }
+            return
+        }
+        // File ảnh
+        if item.type == .file, let fileURL = item.fileURL, isImageFile(fileURL) {
+            let url = URL(fileURLWithPath: fileURL)
+            DispatchQueue.global(qos: .userInitiated).async {
+                let thumb = ImageThumbnail.load(fileURL: url, maxPixelSize: 200)
+                DispatchQueue.main.async {
+                    self.cachedImage = thumb
+                }
+            }
         }
     }
     
     private func exportJSONToExcelAndOpen() {
         guard let text = item.text, item.isJSON else { return }
         guard let data = text.data(using: .utf8) else { return }
-        
+
+        // Đẩy việc parse JSON + ghi xlsx (libxlsxwriter chạy đồng bộ đĩa) ra background
+        DispatchQueue.global(qos: .userInitiated).async {
+            self._exportJSONToExcelSync(data: data)
+        }
+    }
+
+    private func _exportJSONToExcelSync(data: Data) {
         do {
             let json = try JSONSerialization.jsonObject(with: data)
             
@@ -1066,8 +1420,11 @@ struct ClipboardItemView: View {
             }
             
             workbook_close(workbook)
-            
-            NSWorkspace.shared.open(FileManager.default.temporaryDirectory.appendingPathComponent(fileName))
+
+            let outURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+            DispatchQueue.main.async {
+                NSWorkspace.shared.open(outURL)
+            }
         } catch {
             print("Error exporting JSON to XLSX: \(error)")
         }
@@ -1090,6 +1447,14 @@ struct ClipboardItemView: View {
         }
     }
     
+    private func openImageInPreview() {
+        guard let url = ClipboardItemView.exportImageToTempFile(item) else { return }
+        NSWorkspace.shared.open(url)
+        if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
+            window.close()
+        }
+    }
+
     private func saveImageToFile() {
         guard item.type == .image, let imageData = item.imageData else { return }
         
@@ -1233,6 +1598,36 @@ struct ClipboardItemView: View {
         }
     }
     
+    private func pasteExcelAsImage() {
+        // Đóng popup ngay để app trước được focus
+        if let window = NSApp.windows.first(where: { $0.isVisible && ($0 is NSPanel) && $0.title.hasPrefix("Clipboard") }) {
+            window.close()
+        }
+        // Render image off-main (drawing có thể nặng với bảng lớn)
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let imageData = self.generateExcelImageData() else { return }
+            DispatchQueue.main.async {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setData(imageData, forType: .tiff)
+                ClipboardManager.shared.ignoreNextChange()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+                    let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
+                    let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
+                    let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+                    let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
+                    vDown?.flags = .maskCommand
+                    vUp?.flags = .maskCommand
+                    cmdDown?.post(tap: .cghidEventTap)
+                    vDown?.post(tap: .cghidEventTap)
+                    vUp?.post(tap: .cghidEventTap)
+                    cmdUp?.post(tap: .cghidEventTap)
+                }
+            }
+        }
+    }
+
     private func generateExcelImageData() -> Data? {
         guard let text = item.text, item.isExcelData else { return nil }
         

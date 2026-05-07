@@ -30,12 +30,21 @@ class UpdateManager: ObservableObject {
     
     private var releaseDownloadURL: URL?
     private var releaseNotes: String?
+    private var currentDownloadTask: URLSessionDownloadTask?
     
     // MARK: - Check for updates
     
+    private let checkLock = NSLock()
+
     func checkForUpdates(silent: Bool = false) {
-        guard !isChecking else { return }
+        // Atomic guard: tránh 2 click trùng (auto-check + manual) trong cửa sổ <100ms
+        checkLock.lock()
+        if isChecking {
+            checkLock.unlock()
+            return
+        }
         isChecking = true
+        checkLock.unlock()
         updateError = nil
         
         let urlString = "https://api.github.com/repos/\(githubOwner)/\(githubRepo)/releases/latest"
@@ -129,7 +138,20 @@ class UpdateManager: ObservableObject {
             updateError = "No download URL available"
             return
         }
-        
+
+        // Kiểm tra app bundle có ghi được không (case: chạy từ DMG read-only)
+        let bundlePath = Bundle.main.bundlePath
+        let parentDir = (bundlePath as NSString).deletingLastPathComponent
+        if !FileManager.default.isWritableFile(atPath: parentDir) {
+            let alert = NSAlert()
+            alert.messageText = Localization.shared.localizedString("update_cannot_install")
+            alert.informativeText = Localization.shared.localizedString("update_move_to_applications")
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
         isDownloading = true
         downloadProgress = 0
         updateError = nil
@@ -137,17 +159,37 @@ class UpdateManager: ObservableObject {
         let task = URLSession.shared.downloadTask(with: downloadURL) { [weak self] tempURL, response, error in
             DispatchQueue.main.async {
                 self?.isDownloading = false
-                
+                self?.currentDownloadTask = nil
+
                 if let error = error {
+                    let nsErr = error as NSError
+                    if nsErr.domain == NSURLErrorDomain && nsErr.code == NSURLErrorCancelled {
+                        // User chủ động cancel, không hiện error
+                        return
+                    }
                     self?.updateError = error.localizedDescription
                     return
                 }
-                
+
                 guard let tempURL = tempURL else {
                     self?.updateError = "Download failed"
                     return
                 }
-                
+
+                // Verify integrity trước khi install:
+                // 1. Kích thước phải khớp Content-Length (tránh download bị cắt)
+                // 2. Magic bytes "PK" — file zip hợp lệ
+                if !(self?.verifyZipIntegrity(at: tempURL, response: response) ?? false) {
+                    self?.updateError = Localization.shared.localizedString("update_download_corrupted")
+                    let alert = NSAlert()
+                    alert.messageText = Localization.shared.localizedString("update_cannot_install")
+                    alert.informativeText = Localization.shared.localizedString("update_download_corrupted")
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                    return
+                }
+
                 self?.installUpdate(from: tempURL)
             }
         }
@@ -160,10 +202,36 @@ class UpdateManager: ObservableObject {
         }
         // Keep observation alive
         objc_setAssociatedObject(task, "progressObservation", observation, .OBJC_ASSOCIATION_RETAIN)
-        
+
+        currentDownloadTask = task
         task.resume()
     }
+
+    func cancelDownload() {
+        currentDownloadTask?.cancel()
+        currentDownloadTask = nil
+        isDownloading = false
+        downloadProgress = 0
+    }
     
+    private func verifyZipIntegrity(at fileURL: URL, response: URLResponse?) -> Bool {
+        // Size check
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let actualSize = attrs[.size] as? Int64, actualSize > 0 else {
+            return false
+        }
+        if let expected = response?.expectedContentLength, expected > 0, actualSize != expected {
+            print("DEBUG: Zip size mismatch — expected \(expected), got \(actualSize)")
+            return false
+        }
+        // Magic bytes "PK\x03\x04" (zip header)
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return false }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 4), header.count == 4 else { return false }
+        return header[0] == 0x50 && header[1] == 0x4B
+            && (header[2] == 0x03 || header[2] == 0x05 || header[2] == 0x07)
+    }
+
     private func installUpdate(from zipURL: URL) {
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent("ClipboardUpdate-\(UUID().uuidString)")
